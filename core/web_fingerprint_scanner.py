@@ -23,6 +23,12 @@ class PortFingerprintCandidate:
     ports: list[int]
 
 
+@dataclass
+class FingerprintBatch:
+    ports: tuple[int, ...]
+    ips: list[str]
+
+
 class WebFingerprintScanner:
     """Identify web services with nmap based on previously discovered open ports."""
 
@@ -37,12 +43,16 @@ class WebFingerprintScanner:
     def scan(self, subdomains: list[dict], port_scan_hosts: dict[str, list[int]]) -> dict[str, Any]:
         """Run web fingerprinting only."""
         ip_candidates = self._build_ip_candidates(port_scan_hosts)
+        batches = self._build_batches(ip_candidates)
         subdomain_index = self._build_subdomain_index(subdomains)
+        candidate_endpoint_count = sum(len(candidate.ports) for candidate in ip_candidates)
 
         fingerprint_result = {
             "scan_time": datetime.now().isoformat(),
             "statistics": {
-                "candidate_endpoint_count": sum(len(candidate.ports) for candidate in ip_candidates),
+                "candidate_ip_count": len(ip_candidates),
+                "candidate_endpoint_count": candidate_endpoint_count,
+                "batch_count": len(batches),
                 "web_target_count": 0,
                 "fingerprint_error_count": 0,
             },
@@ -54,18 +64,26 @@ class WebFingerprintScanner:
 
         if not self.nmap_path:
             logger.warning("[yellow]nmap 当前不可用，跳过 Web 指纹识别[/yellow]")
-            fingerprint_result["statistics"]["fingerprint_error_count"] = len(ip_candidates)
+            fingerprint_result["statistics"]["fingerprint_error_count"] = len(batches)
             return fingerprint_result
 
+        logger.info(
+            f"[cyan]Web 指纹: {len(ip_candidates)} 个 IP，"
+            f"{candidate_endpoint_count} 个候选端点，{len(batches)} 个 nmap 批次[/cyan]"
+        )
+
         ip_port_web_map: dict[tuple[str, int], dict[str, Any]] = {}
-        for candidate in ip_candidates:
-            ok, xml_output = self._fingerprint_ip(candidate)
+        for index, batch in enumerate(batches, 1):
+            logger.info(
+                f"[dim]Web 指纹批次 {index}/{len(batches)}: "
+                f"{len(batch.ips)} 个 IP × {len(batch.ports)} 个端口[/dim]"
+            )
+            ok, xml_output = self._fingerprint_batch(batch)
             if not ok:
                 fingerprint_result["statistics"]["fingerprint_error_count"] += 1
                 continue
 
-            for port_id, nmap_info in self._parse_ip_fingerprint(xml_output).items():
-                ip_port_web_map[(candidate.ip, port_id)] = nmap_info
+            ip_port_web_map.update(self._parse_batch_fingerprint(xml_output))
 
         targets = self._map_web_targets(subdomain_index, ip_port_web_map)
         fingerprint_result["targets"] = targets
@@ -79,6 +97,18 @@ class WebFingerprintScanner:
             if normalized_ports:
                 candidates.append(PortFingerprintCandidate(ip=ip, ports=normalized_ports))
         return candidates
+
+    @staticmethod
+    def _build_batches(candidates: list[PortFingerprintCandidate]) -> list[FingerprintBatch]:
+        grouped: dict[tuple[int, ...], list[str]] = {}
+        for candidate in candidates:
+            grouped.setdefault(tuple(candidate.ports), []).append(candidate.ip)
+
+        batches = [
+            FingerprintBatch(ports=ports, ips=sorted(ips))
+            for ports, ips in grouped.items()
+        ]
+        return sorted(batches, key=lambda batch: (batch.ports, tuple(batch.ips)))
 
     def _build_subdomain_index(self, subdomains: list[dict[str, Any]]) -> dict[str, list[str]]:
         subdomain_index: dict[str, list[str]] = {}
@@ -94,14 +124,18 @@ class WebFingerprintScanner:
         return subdomain_index
 
     def _fingerprint_ip(self, candidate: PortFingerprintCandidate) -> tuple[bool, str]:
+        batch = FingerprintBatch(ports=tuple(candidate.ports), ips=[candidate.ip])
+        return self._fingerprint_batch(batch)
+
+    def _fingerprint_batch(self, batch: FingerprintBatch) -> tuple[bool, str]:
         command = [
             self.nmap_path,
             *config.WEB_FINGERPRINT_NMAP_ARGS,
             "-p",
-            ",".join(str(port) for port in candidate.ports),
+            ",".join(str(port) for port in batch.ports),
             "-oX",
             "-",
-            candidate.ip,
+            *batch.ips,
         ]
         try:
             result = subprocess.run(
@@ -111,41 +145,70 @@ class WebFingerprintScanner:
                 timeout=self.timeout,
             )
         except subprocess.TimeoutExpired:
-            logger.warning(f"[yellow]Web 指纹超时: {candidate.ip}[/yellow]")
+            logger.warning(
+                f"[yellow]Web 指纹超时: {len(batch.ips)} 个 IP / {len(batch.ports)} 个端口[/yellow]"
+            )
             return False, ""
         except Exception as exc:
-            logger.error(f"[red]Web 指纹出错: {candidate.ip} -> {exc}[/red]")
+            logger.error(f"[red]Web 指纹出错: {', '.join(batch.ips)} -> {exc}[/red]")
             return False, ""
 
         if result.returncode != 0:
             logger.warning(
-                f"[yellow]nmap Web 指纹返回非零状态码 {result.returncode}: {candidate.ip}[/yellow]"
+                "[yellow]nmap Web 指纹返回非零状态码 "
+                f"{result.returncode}: {', '.join(batch.ips)}[/yellow]"
             )
             return False, result.stderr or result.stdout or ""
         return True, result.stdout or ""
 
-    def _parse_ip_fingerprint(self, xml_output: str) -> dict[int, dict[str, str]]:
+    def _parse_batch_fingerprint(self, xml_output: str) -> dict[tuple[str, int], dict[str, str]]:
         try:
             root = ET.fromstring(xml_output)
         except ET.ParseError as exc:
             logger.warning(f"[yellow]nmap XML 解析失败: {exc}[/yellow]")
             return {}
 
-        targets: dict[int, dict[str, str]] = {}
-        for port_element in root.findall(".//port"):
-            state_element = port_element.find("state")
-            state = state_element.attrib.get("state", "") if state_element is not None else ""
-            if state != "open":
+        targets: dict[tuple[str, int], dict[str, str]] = {}
+        for host_element in root.findall(".//host"):
+            ip = self._extract_host_ip(host_element)
+            if not ip:
                 continue
 
-            port_id = int(port_element.attrib.get("portid", "0") or 0)
-            service_element = port_element.find("service")
-            scripts = {script.attrib.get("id", ""): script for script in port_element.findall("script")}
-            nmap_info = self._extract_nmap_info(service_element, scripts)
-            if self._is_web_service(nmap_info):
-                targets[port_id] = nmap_info
+            for port_element in host_element.findall("./ports/port"):
+                state_element = port_element.find("state")
+                state = state_element.attrib.get("state", "") if state_element is not None else ""
+                if state != "open":
+                    continue
+
+                port_id = int(port_element.attrib.get("portid", "0") or 0)
+                service_element = port_element.find("service")
+                scripts = {script.attrib.get("id", ""): script for script in port_element.findall("script")}
+                nmap_info = self._extract_nmap_info(service_element, scripts)
+                if self._is_web_service(nmap_info):
+                    targets[(ip, port_id)] = nmap_info
 
         return targets
+
+    def _parse_ip_fingerprint(self, xml_output: str) -> dict[int, dict[str, str]]:
+        targets: dict[int, dict[str, str]] = {}
+        grouped_targets = self._parse_batch_fingerprint(xml_output)
+        if not grouped_targets:
+            return targets
+
+        first_ip = next(iter(grouped_targets))[0]
+        for (ip, port_id), nmap_info in grouped_targets.items():
+            if ip == first_ip:
+                targets[port_id] = nmap_info
+        return targets
+
+    @staticmethod
+    def _extract_host_ip(host_element: ET.Element) -> str:
+        for address_element in host_element.findall("address"):
+            addr = (address_element.attrib.get("addr") or "").strip()
+            addr_type = (address_element.attrib.get("addrtype") or "").lower()
+            if addr and addr_type in {"ipv4", "ipv6"}:
+                return addr
+        return ""
 
     def _map_web_targets(
         self,

@@ -26,6 +26,7 @@ psycopg[binary]>=3.0
 pyOpenSSL>=21.0.0
 pyparsing>=2.4.7
 PySocks>=1.7.1
+PyYAML>=6.0
 requests>=2.31.0
 requests-ntlm>=1.1.0
 requests-toolbelt>=1.0.0

@@ -32,6 +32,9 @@ class BatchScanRunner:
         self,
         domains: list[str],
         tools: list[str],
+        skip_wildcard: bool = False,
+        skip_validation: bool = False,
+        parallel: bool = True,
         enable_port_scan: bool = False,
         port_scan_mode: str | None = None,
         enable_web_fingerprint: bool = False,
@@ -48,9 +51,9 @@ class BatchScanRunner:
                 result = self.scanner.scan(
                     target=domain,
                     tools=tools,
-                    skip_wildcard=False,
-                    skip_validation=False,
-                    parallel=True,
+                    skip_wildcard=skip_wildcard,
+                    skip_validation=skip_validation,
+                    parallel=parallel,
                 )
 
                 saved_path = self.scanner.save_result()

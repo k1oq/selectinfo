@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
@@ -23,6 +24,19 @@ from utils.logger import console
 
 __version__ = "1.0.0"
 STARTUP_SETUP_TOOLS = ("subfinder", "oneforall", "nmap")
+
+
+@dataclass
+class ScanExecutionPlan:
+    targets: list[str]
+    tools: list[str]
+    skip_wildcard: bool = False
+    skip_validation: bool = False
+    parallel: bool = True
+    enable_port_scan: bool = False
+    port_scan_mode: str | None = None
+    enable_web_fingerprint: bool = False
+    enable_directory_scan: bool = False
 
 
 def print_banner():
@@ -113,7 +127,7 @@ def prompt_tool_setup(scanner: SubdomainScanner, tool_name: str) -> bool:
         console.print(f"[cyan]正在下载 {tool_name}...[/cyan]")
         return target.download()
 
-    console.print(f"[yellow]跳过 {tool_name} 设置[/yellow]")
+    console.print(f"[yellow]跳过 {tool_name} 配置[/yellow]")
     return False
 
 
@@ -187,10 +201,177 @@ def manage_tools_menu():
             console.print_json(json.dumps(api.download_tool(tool_name), ensure_ascii=False))
 
 
+def prompt_subdomain_tools(available: list[str]) -> list[str]:
+    if len(available) == 1:
+        console.print(f"[cyan]子域名工具: {available[0]}[/cyan]")
+        return list(available)
+
+    console.print("\n[bold cyan]子域名工具[/bold cyan]")
+    for index, tool_name in enumerate(available, 1):
+        console.print(f"  [{index}] {tool_name}")
+
+    while True:
+        raw = Prompt.ask("选择工具编号，逗号分隔，直接回车表示全部", default="").strip()
+        if not raw:
+            return list(available)
+
+        selected: list[str] = []
+        seen = set()
+        valid = True
+        for token in raw.replace("，", ",").split(","):
+            token = token.strip()
+            if not token.isdigit():
+                valid = False
+                break
+
+            index = int(token) - 1
+            if not (0 <= index < len(available)):
+                valid = False
+                break
+
+            tool_name = available[index]
+            if tool_name not in seen:
+                seen.add(tool_name)
+                selected.append(tool_name)
+
+        if valid and selected:
+            return selected
+
+        console.print("[red]输入无效，请重新输入。[/red]")
+
+
+def prompt_targets_from_lines() -> list[str]:
+    console.print("\n[bold]请输入域名（每行一个，空行结束），或直接输入文件路径[/bold]\n")
+    first_line = Prompt.ask("").strip()
+
+    domains: list[str] = []
+    if first_line and Path(first_line).exists():
+        try:
+            with open(first_line, "r", encoding="utf-8") as file:
+                domains = [line.strip() for line in file if line.strip()]
+            console.print(f"[green]已从文件加载 {len(domains)} 个域名[/green]")
+        except Exception as exc:
+            console.print(f"[red]读取文件失败: {exc}[/red]")
+            return []
+    else:
+        if first_line:
+            domains.append(first_line)
+        while True:
+            line = Prompt.ask("", default="").strip()
+            if not line:
+                break
+            domains.append(line)
+
+    return domains
+
+
+def choose_scan_mode() -> str:
+    console.print("\n[bold cyan]端口扫描[/bold cyan]\n")
+    console.print("[bold]选择端口范围:[/bold]")
+
+    presets = list(config.PORT_PRESETS.items())
+    for index, (_, info) in enumerate(presets, 1):
+        console.print(f"  [{index}] {info['name']}")
+
+    console.print()
+    choice = Prompt.ask("请选择", default="1")
+    try:
+        index = int(choice) - 1
+        if 0 <= index < len(presets):
+            return presets[index][0]
+    except ValueError:
+        pass
+    return "common"
+
+
+def build_scan_plan(
+    targets: list[str],
+    available_tools: list[str],
+    tool_status: dict[str, bool],
+    *,
+    default_enable_port_scan: bool,
+) -> ScanExecutionPlan | None:
+    selected_tools = prompt_subdomain_tools(available_tools)
+    run_wildcard = Confirm.ask("是否执行泛解析检测？", default=True)
+    run_validation = Confirm.ask("是否执行 DNS 验证？", default=True)
+    parallel = len(selected_tools) > 1 and Confirm.ask("是否并行运行子域名工具？", default=True)
+
+    enable_port_scan = False
+    port_scan_mode = None
+    enable_web_fingerprint = False
+    enable_directory_scan = False
+
+    if tool_status.get("nmap"):
+        enable_port_scan = Confirm.ask("是否在子域名扫描后执行端口扫描？", default=default_enable_port_scan)
+        if enable_port_scan:
+            port_scan_mode = choose_scan_mode()
+            enable_web_fingerprint = Confirm.ask("是否在端口扫描后执行 Web 指纹识别？", default=False)
+            if enable_web_fingerprint:
+                enable_directory_scan = Confirm.ask("是否在 Web 指纹后执行 Web 目录扫描？", default=False)
+                if enable_directory_scan and not tool_status.get("dirsearch"):
+                    console.print("[yellow]dirsearch 当前不可用，目录扫描运行时会被跳过。[/yellow]")
+    else:
+        console.print("[yellow]nmap 当前不可用，本次将跳过端口扫描、Web 指纹和目录扫描。[/yellow]")
+
+    plan = ScanExecutionPlan(
+        targets=targets,
+        tools=selected_tools,
+        skip_wildcard=not run_wildcard,
+        skip_validation=not run_validation,
+        parallel=parallel,
+        enable_port_scan=enable_port_scan,
+        port_scan_mode=port_scan_mode,
+        enable_web_fingerprint=enable_web_fingerprint,
+        enable_directory_scan=enable_directory_scan,
+    )
+
+    show_scan_plan(plan, tool_status)
+    if not Confirm.ask("按以上配置开始执行？", default=True):
+        console.print("[yellow]已取消[/yellow]")
+        return None
+    return plan
+
+
+def show_scan_plan(plan: ScanExecutionPlan, tool_status: dict[str, bool]):
+    table = Table(title="执行计划", show_header=False)
+    table.add_column("项目", style="cyan")
+    table.add_column("配置", overflow="fold")
+
+    if len(plan.targets) == 1:
+        target_summary = plan.targets[0]
+    else:
+        preview = ", ".join(plan.targets[:3])
+        suffix = f" ... 共 {len(plan.targets)} 个" if len(plan.targets) > 3 else ""
+        target_summary = preview + suffix
+
+    table.add_row("目标", target_summary)
+    table.add_row("子域名工具", ", ".join(plan.tools))
+    table.add_row("泛解析检测", "是" if not plan.skip_wildcard else "否")
+    table.add_row("DNS 验证", "是" if not plan.skip_validation else "否")
+    table.add_row("子域名工具并行", "是" if plan.parallel else "否")
+    table.add_row("端口扫描", "是" if plan.enable_port_scan else "否")
+
+    if plan.enable_port_scan and plan.port_scan_mode:
+        port_mode_name = config.PORT_PRESETS[plan.port_scan_mode]["name"]
+        table.add_row("端口范围", port_mode_name)
+
+    table.add_row("Web 指纹识别", "是" if plan.enable_web_fingerprint else "否")
+
+    if plan.enable_directory_scan and not tool_status.get("dirsearch"):
+        directory_summary = "是（dirsearch 当前不可用，运行时会跳过）"
+    else:
+        directory_summary = "是" if plan.enable_directory_scan else "否"
+    table.add_row("Web 目录扫描", directory_summary)
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
 def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
     available = get_available_subdomain_tools(scanner, tool_status)
     if not available:
-        console.print("[red]没有可用的子域名工具，请先配置 subfinder 或 oneforall[/red]")
+        console.print("[red]没有可用的子域名工具，请先配置 subfinder 或 oneforall。[/red]")
         return
 
     domain = Prompt.ask("\n[bold]请输入目标域名[/bold]").strip()
@@ -198,24 +379,22 @@ def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
         console.print("[red]域名不能为空[/red]")
         return
 
-    console.print("\n[cyan]扫描配置:[/cyan]")
-    console.print(f"  目标: {domain}")
-    console.print(f"  工具: {', '.join(available)}")
-    console.print("  泛解析检测: 是")
-    console.print("  DNS 校验: 是")
-    console.print()
-
-    if not Confirm.ask("开始扫描？", default=True):
-        console.print("[yellow]已取消[/yellow]")
+    plan = build_scan_plan(
+        targets=[domain],
+        available_tools=available,
+        tool_status=tool_status,
+        default_enable_port_scan=bool(tool_status.get("nmap")),
+    )
+    if plan is None:
         return
 
     try:
         result = scanner.scan(
-            target=domain,
-            tools=available,
-            skip_wildcard=False,
-            skip_validation=False,
-            parallel=True,
+            target=plan.targets[0],
+            tools=plan.tools,
+            skip_wildcard=plan.skip_wildcard,
+            skip_validation=plan.skip_validation,
+            parallel=plan.parallel,
         )
         show_scan_result(result)
 
@@ -223,21 +402,24 @@ def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
         console.print(f"\n[green]结果已保存至: {saved_path}[/green]")
 
         if result.get("wildcard", {}).get("detected"):
-            console.print("\n[yellow]检测到泛解析，跳过端口扫描、Web 指纹和目录扫描[/yellow]")
+            console.print("\n[yellow]检测到泛解析，跳过端口扫描、Web 指纹和目录扫描。[/yellow]")
             return
 
         if not result.get("subdomains"):
             return
 
-        if not tool_status.get("nmap"):
-            console.print("\n[yellow]nmap 当前不可用，跳过端口扫描和 Web 指纹[/yellow]")
+        if not plan.enable_port_scan:
             return
 
-        port_results = run_port_scan(result["subdomains"], output_path=saved_path)
+        port_results = run_port_scan(
+            result["subdomains"],
+            mode=plan.port_scan_mode,
+            output_path=saved_path,
+        )
         if not port_results:
             return
 
-        if not Confirm.ask("是否继续做 Web 指纹识别？", default=False):
+        if not plan.enable_web_fingerprint:
             return
 
         fingerprint_result = run_web_fingerprint(
@@ -246,10 +428,10 @@ def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
             output_path=saved_path,
         )
         if not fingerprint_result or not fingerprint_result.get("targets"):
-            console.print("[yellow]未识别出可用的 Web 目标，跳过目录扫描[/yellow]")
+            console.print("[yellow]未识别出可用的 Web 目标，跳过目录扫描。[/yellow]")
             return
 
-        if not Confirm.ask("是否继续做 Web 目录扫描？", default=False):
+        if not plan.enable_directory_scan:
             return
 
         run_directory_scan(
@@ -266,66 +448,21 @@ def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
 def scan_batch_domains(scanner: SubdomainScanner, tool_status: dict[str, bool]):
     available = get_available_subdomain_tools(scanner, tool_status)
     if not available:
-        console.print("[red]没有可用的子域名工具，请先配置 subfinder 或 oneforall[/red]")
+        console.print("[red]没有可用的子域名工具，请先配置 subfinder 或 oneforall。[/red]")
         return
 
-    console.print("\n[bold]请输入域名（每行一个，空行结束），或直接输入文件路径[/bold]\n")
-    first_line = Prompt.ask("").strip()
-
-    domains: list[str] = []
-    if first_line and Path(first_line).exists():
-        try:
-            with open(first_line, "r", encoding="utf-8") as file:
-                domains = [line.strip() for line in file if line.strip()]
-            console.print(f"[green]从文件加载了 {len(domains)} 个域名[/green]")
-        except Exception as exc:
-            console.print(f"[red]读取文件失败: {exc}[/red]")
-            return
-    else:
-        if first_line:
-            domains.append(first_line)
-        while True:
-            line = Prompt.ask("", default="").strip()
-            if not line:
-                break
-            domains.append(line)
-
+    domains = prompt_targets_from_lines()
     if not domains:
         console.print("[red]没有输入域名[/red]")
         return
 
-    console.print("\n[cyan]扫描配置:[/cyan]")
-    console.print(f"  域名数量: {len(domains)}")
-    console.print(f"  工具: {', '.join(available)}")
-    console.print("  泛解析检测: 是")
-    console.print("  DNS 校验: 是")
-
-    batch_port_scan_enabled = False
-    batch_port_scan_mode = None
-    batch_web_fingerprint_enabled = False
-    batch_directory_scan_enabled = False
-    if tool_status.get("nmap"):
-        batch_port_scan_enabled = Confirm.ask(
-            "批量扫描完成后，是否执行端口扫描？",
-            default=False,
-        )
-        if batch_port_scan_enabled:
-            batch_port_scan_mode = choose_scan_mode()
-            batch_web_fingerprint_enabled = Confirm.ask(
-                "端口扫描完成后，是否继续做 Web 指纹识别？",
-                default=False,
-            )
-            if batch_web_fingerprint_enabled:
-                batch_directory_scan_enabled = Confirm.ask(
-                    "Web 指纹识别后，是否继续做 Web 目录扫描？",
-                    default=False,
-                )
-    else:
-        console.print("[yellow]nmap 当前不可用，本次批量任务将跳过端口扫描和 Web 指纹[/yellow]")
-
-    console.print()
-    if not Confirm.ask(f"开始批量扫描 {len(domains)} 个域名？", default=True):
-        console.print("[yellow]已取消[/yellow]")
+    plan = build_scan_plan(
+        targets=domains,
+        available_tools=available,
+        tool_status=tool_status,
+        default_enable_port_scan=False,
+    )
+    if plan is None:
         return
 
     runner = BatchScanRunner(
@@ -335,16 +472,19 @@ def scan_batch_domains(scanner: SubdomainScanner, tool_status: dict[str, bool]):
         run_directory_scan=run_directory_scan,
     )
     batch_summary, summary_path = runner.run(
-        domains=domains,
-        tools=available,
-        enable_port_scan=batch_port_scan_enabled,
-        port_scan_mode=batch_port_scan_mode,
-        enable_web_fingerprint=batch_web_fingerprint_enabled,
-        enable_directory_scan=batch_directory_scan_enabled,
+        domains=plan.targets,
+        tools=plan.tools,
+        skip_wildcard=plan.skip_wildcard,
+        skip_validation=plan.skip_validation,
+        parallel=plan.parallel,
+        enable_port_scan=plan.enable_port_scan,
+        port_scan_mode=plan.port_scan_mode,
+        enable_web_fingerprint=plan.enable_web_fingerprint,
+        enable_directory_scan=plan.enable_directory_scan,
     )
 
     success = batch_summary["statistics"]["success_count"]
-    console.print(f"\n[bold green]批量扫描完成: {success}/{len(domains)} 成功[/bold green]")
+    console.print(f"\n[bold green]批量扫描完成: {success}/{len(plan.targets)} 成功[/bold green]")
     runner.print_overview(batch_summary, summary_path)
     console.print(f"[dim]结果保存在: {config.RESULTS_DIR}[/dim]")
 
@@ -369,25 +509,6 @@ def show_scan_result(result: dict):
         console.print(f"[dim]... 还有 {len(result['subdomains']) - 30} 个子域名[/dim]")
 
 
-def choose_scan_mode() -> str:
-    console.print("\n[bold cyan]端口扫描[/bold cyan]\n")
-    console.print("[bold]选择端口范围:[/bold]")
-
-    presets = list(config.PORT_PRESETS.items())
-    for index, (_, info) in enumerate(presets, 1):
-        console.print(f"  [{index}] {info['name']}")
-
-    console.print()
-    choice = Prompt.ask("请选择", default="1")
-    try:
-        index = int(choice) - 1
-        if 0 <= index < len(presets):
-            return presets[index][0]
-    except ValueError:
-        pass
-    return "common"
-
-
 def merge_result_field(output_path: Path | None, field_name: str, payload: dict):
     if not output_path or not Path(output_path).exists():
         return
@@ -401,7 +522,7 @@ def merge_result_field(output_path: Path | None, field_name: str, payload: dict)
 def run_port_scan(subdomains: list, mode: str | None = None, output_path: Path | None = None) -> Dict:
     hosts = sorted({ip for item in subdomains for ip in item.get("ip", [])})
     if not hosts:
-        console.print("[yellow]没有可用的 IP，跳过端口扫描[/yellow]")
+        console.print("[yellow]没有可用的 IP，跳过端口扫描。[/yellow]")
         return {}
 
     console.print("\n[cyan]端口扫描[/cyan]")
@@ -430,7 +551,7 @@ def run_web_fingerprint(
     output_path: Path | None = None,
 ) -> Dict:
     if not port_scan_hosts:
-        console.print("[yellow]没有开放端口结果，跳过 Web 指纹[/yellow]")
+        console.print("[yellow]没有开放端口结果，跳过 Web 指纹。[/yellow]")
         return {}
 
     console.print("\n[cyan]Web 指纹识别[/cyan]")
@@ -455,7 +576,7 @@ def run_directory_scan(
     output_path: Path | None = None,
 ) -> Dict:
     if not web_targets:
-        console.print("[yellow]没有可用的 Web 目标，跳过目录扫描[/yellow]")
+        console.print("[yellow]没有可用的 Web 目标，跳过目录扫描。[/yellow]")
         return {}
 
     console.print("\n[cyan]Web 目录扫描[/cyan]")

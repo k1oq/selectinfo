@@ -103,6 +103,43 @@ class BatchScanRunnerTests(unittest.TestCase):
         self.assertEqual(summary["statistics"]["total_web_targets"], 2)
         self.assertEqual(summary["statistics"]["total_dirsearch_findings"], 3)
 
+    def test_run_forwards_scan_options_to_scanner(self):
+        class FakeScanner:
+            def __init__(self):
+                self.calls = []
+
+            def scan(self, **kwargs):
+                self.calls.append(kwargs)
+                return {
+                    "subdomains": [{"subdomain": "www.example.com", "ip": ["1.1.1.1"]}],
+                    "wildcard": {"detected": False},
+                    "statistics": {"total_found": 1},
+                }
+
+            def save_result(self):
+                return None
+
+        scanner = FakeScanner()
+        runner = BatchScanRunner(
+            scanner=scanner,
+            run_port_scan=lambda *args, **kwargs: {},
+            run_web_fingerprint=lambda *args, **kwargs: {},
+            run_directory_scan=lambda *args, **kwargs: {},
+        )
+
+        runner.run(
+            domains=["example.com"],
+            tools=["subfinder"],
+            skip_wildcard=True,
+            skip_validation=True,
+            parallel=False,
+        )
+
+        self.assertEqual(len(scanner.calls), 1)
+        self.assertTrue(scanner.calls[0]["skip_wildcard"])
+        self.assertTrue(scanner.calls[0]["skip_validation"])
+        self.assertFalse(scanner.calls[0]["parallel"])
+
 
 if __name__ == "__main__":
     unittest.main()

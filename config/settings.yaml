@@ -1,0 +1,81 @@
+# Readable static project settings.
+# Machine-specific overrides should still go in config/local_settings.json.
+
+dns:
+  timeout: 3
+  threads: 50
+  wildcard_test_count: 3
+
+port_scan:
+  threads: 200
+  timeout: 600.0
+  nmap_path: "nmap"
+  default_args:
+    windows:
+      - "-sT"
+      - "-Pn"
+      - "-T4"
+    default:
+      - "-sS"
+      - "-Pn"
+      - "-T4"
+
+web_fingerprint:
+  timeout: 600
+  host_timeout: "90s"
+  script_timeout: "15s"
+  base_args:
+    - "-Pn"
+    - "-sV"
+    - "--version-light"
+    - "--max-retries"
+    - "1"
+  scripts:
+    - "http-title"
+    - "http-server-header"
+    - "ssl-cert"
+
+dirsearch:
+  timeout: 1800
+  threads: 8
+  max_workers: 8
+  default_extra_args:
+    - "--random-agent"
+    - "--delay"
+    - "0.2"
+    - "--max-rate"
+    - "3"
+    - "--retries"
+    - "1"
+    - "--exclude-status"
+    - "404,429,500-999"
+
+port_presets:
+  common:
+    name: "Common Ports"
+    file: "ports_common.txt"
+  web:
+    name: "Web Ports"
+    file: "ports_web.txt"
+  high_risk:
+    name: "High Risk Ports"
+    file: "ports_high_risk.txt"
+  full:
+    name: "Full Scan"
+    file: "ports_full.txt"
+  custom:
+    name: "Custom Ports"
+    file: "ports_custom.txt"
+
+tool_defaults:
+  subfinder:
+    timeout: 600
+    use_all: true
+    silent: true
+    extra_args: []
+  oneforall:
+    timeout: 1800
+    alive: false
+    brute: false
+    fmt: "csv"
+    extra_args: []
