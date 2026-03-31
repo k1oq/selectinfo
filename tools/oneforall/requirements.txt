@@ -19,5 +19,6 @@ termcolor==1.1.0
 tqdm==4.64.0
 treelib==1.6.1
 urllib3==1.26.9
+pysqlite3-binary==0.5.4; sys_platform != "win32"
 win32-setctime==1.1.0; sys_platform == "win32"
 setuptools

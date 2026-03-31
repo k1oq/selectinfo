@@ -114,6 +114,7 @@ chmod +x tools/subfinder/subfinder
 - 项目地址: `https://github.com/shmilylty/OneForAll`
 - 默认位置: `tools/oneforall/`
 - Linux 直接安装 `tools/oneforall/requirements.txt` 即可，已兼容 Windows 专属依赖
+- 如果当前 Python 缺少标准库 `sqlite3`，项目会优先使用 `pysqlite3-binary` 作为兼容替代
 
 ### dirsearch
 

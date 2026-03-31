@@ -107,6 +107,20 @@ class ToolSelfChecker:
                 message=f"未找到 oneforall.py，期望位置: {tool.get_expected_location()}",
             )
 
+        sqlite_probe = self._run_command(
+            [sys.executable, "-c", "import sqlite3; print(sqlite3.sqlite_version)"],
+            timeout=15,
+            cwd=str(tool.tool_dir),
+        )
+        if not sqlite_probe["ok"]:
+            return ToolCheckResult(
+                name=tool.name,
+                installed=True,
+                usable=False,
+                path=path,
+                message=f"Python sqlite3 不可用: {sqlite_probe['message']}",
+            )
+
         completed = self._run_command(
             [sys.executable, str(tool.script_path), "--help"],
             timeout=20,
@@ -127,7 +141,7 @@ class ToolSelfChecker:
             usable=True,
             path=path,
             version=tool.get_version() or "unknown",
-            message="脚本可执行",
+            message="脚本可执行，sqlite3 可用",
         )
 
     def check_nmap(self) -> ToolCheckResult:
