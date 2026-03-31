@@ -1,0 +1,39 @@
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime output
+results/*.json
+results/*.log
+results/temp/
+tools/oneforall/results/
+tools/oneforall/.db/
+config/local_settings.json
+
+# Local third-party tool state
+tools/oneforall/.git/
+tools/oneforall/.github/
+tools/oneforall/.idea/
+tools/oneforall/__pycache__/
+tools/subfinder/*.tmp
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
