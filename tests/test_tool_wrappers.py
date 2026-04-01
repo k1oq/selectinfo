@@ -1,4 +1,6 @@
 import csv
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -138,6 +140,26 @@ class OneForAllToolTests(unittest.TestCase):
         self.assertEqual(tool.get_last_run()["valid_count"], 2)
         self.assertIn("--path", run_mock.call_args.args[0])
         self.assertIn(str(output_path), run_mock.call_args.args[0])
+
+    def test_domain_registered_handles_missing_use_tld_extract_flag(self):
+        script = (
+            "from config import settings\n"
+            "from common import utils\n"
+            "if hasattr(settings, 'use_tld_extract'):\n"
+            "    delattr(settings, 'use_tld_extract')\n"
+            "print(utils.get_main_domain('www.example.com'))\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(Path(PROJECT_ROOT) / "tools" / "oneforall"),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+        self.assertEqual(result.stdout.strip(), "example.com")
 
 
 if __name__ == "__main__":
