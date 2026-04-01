@@ -12,6 +12,11 @@ import sys
 from pathlib import Path
 
 import yaml
+from utils.logger import get_logger
+from utils.json_io import atomic_write_json
+
+
+logger = get_logger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,6 +32,8 @@ SUBFINDER_RUNTIME_HOME = RUNTIME_DIR / "subfinder_home"
 SUBFINDER_CONFIG_DIR = SUBFINDER_RUNTIME_HOME / ".config" / "subfinder"
 SUBFINDER_CONFIG_FILE = SUBFINDER_CONFIG_DIR / "config.yaml"
 SUBFINDER_PROVIDER_CONFIG_FILE = SUBFINDER_CONFIG_DIR / "provider-config.yaml"
+ONEFORALL_RUNTIME_DIR = RUNTIME_DIR / "oneforall"
+ONEFORALL_EXPORTS_DIR = ONEFORALL_RUNTIME_DIR / "exports"
 
 ONEFORALL_DIR = TOOLS_DIR / "oneforall"
 SUBFINDER_DIR = TOOLS_DIR / "subfinder"
@@ -163,15 +170,15 @@ def load_local_settings() -> dict:
         with open(LOCAL_SETTINGS_FILE, "r", encoding="utf-8") as file:
             data = json.load(file)
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"[yellow]读取本地配置失败，已回退到默认配置: {exc}[/yellow]")
         return {}
 
 
 def save_local_settings(data: dict):
     """Persist local settings."""
     LOCAL_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(LOCAL_SETTINGS_FILE, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
+    atomic_write_json(LOCAL_SETTINGS_FILE, data, ensure_ascii=False, indent=2)
 
 
 def get_tool_path(tool_name: str, default: str = "") -> str:
@@ -265,6 +272,8 @@ def ensure_dirs():
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     SUBFINDER_RUNTIME_HOME.mkdir(parents=True, exist_ok=True)
     SUBFINDER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    ONEFORALL_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    ONEFORALL_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def parse_cli_args(arg_string: str) -> list[str]:

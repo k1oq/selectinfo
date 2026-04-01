@@ -8,6 +8,10 @@ OneForAll is a powerful subdomain integration tool
 :license: GNU General Public License v3.0, see LICENSE for more details.
 """
 
+from sqlite_compat import ensure_sqlite3
+
+ensure_sqlite3()
+
 import fire
 from datetime import datetime
 

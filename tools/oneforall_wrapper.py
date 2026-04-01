@@ -1,15 +1,17 @@
 """
-OneForAll 工具封装
-https://github.com/shmilylty/OneForAll
-
-工具需要预先放置在 tools/oneforall/ 目录下
+OneForAll wrapper.
 """
-import os
-import sys
+
+from __future__ import annotations
+
 import csv
+import json
 import subprocess
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import List
+from uuid import uuid4
 
 import config
 from utils.logger import get_logger
@@ -20,11 +22,11 @@ logger = get_logger(__name__)
 
 
 class OneForAllTool(BaseTool):
-    """OneForAll 子域名收集工具"""
-    
+    """OneForAll subdomain enumeration wrapper."""
+
     name = "oneforall"
     description = "综合性子域名收集工具，支持多数据源"
-    
+
     def __init__(self):
         super().__init__()
         self.default_tool_dir = config.ONEFORALL_DIR
@@ -39,20 +41,16 @@ class OneForAllTool(BaseTool):
                 return candidate, candidate / "oneforall.py"
             if candidate.exists():
                 return candidate.parent, candidate
-            logger.debug(f"OneForAll 配置路径不存在，回退到默认路径: {candidate}")
+            logger.debug(f"OneForAll configured path does not exist, falling back: {candidate}")
 
         return self.default_tool_dir, self.default_tool_dir / "oneforall.py"
-    
+
     def is_installed(self) -> bool:
-        """检查 OneForAll 是否已安装"""
         self.tool_dir, self.script_path = self._resolve_paths()
         self.results_dir = self.tool_dir / "results"
         return self.script_path.exists()
-    
+
     def install(self) -> bool:
-        """
-        提示用户手动安装
-        """
         logger.warning(f"[yellow]请手动克隆 OneForAll 到: {self.tool_dir}[/yellow]")
         logger.info("命令: git clone https://github.com/shmilylty/OneForAll.git tools/oneforall")
         return False
@@ -85,38 +83,47 @@ class OneForAllTool(BaseTool):
             self.script_path = self.tool_dir / "oneforall.py"
             self.results_dir = self.tool_dir / "results"
         return success
-    
+
+    def _build_output_path(self, domain: str, fmt: str) -> Path:
+        config.ensure_dirs()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_domain = domain.replace("*", "_").replace("/", "_").replace("\\", "_")
+        filename = f"{safe_domain}_{timestamp}_{uuid4().hex[:8]}.{fmt}"
+        return config.ONEFORALL_EXPORTS_DIR / filename
+
     def scan(self, domain: str) -> List[str]:
-        """
-        使用 OneForAll 扫描子域名
-        
-        Args:
-            domain: 要扫描的主域名
-            
-        Returns:
-            发现的子域名列表
-        """
         if not self.is_installed():
-            logger.error(f"OneForAll 未安装，请将项目克隆到: {self.tool_dir}")
+            message = f"OneForAll 未安装，请将项目克隆到 {self.tool_dir}"
+            self.set_last_run(status="error", message=message)
+            logger.error(message)
             return []
-        
+
         logger.info(f"[cyan]使用 OneForAll 扫描 {domain}...[/cyan]")
-        
+        settings = config.get_tool_settings(self.name)
+        fmt = str(settings.get("fmt", "csv")).strip().lower()
+        if fmt not in {"csv", "json"}:
+            logger.warning(f"[yellow]OneForAll fmt={fmt} 当前不受支持，已回退为 csv[/yellow]")
+            fmt = "csv"
+
+        output_path = self._build_output_path(domain, fmt)
+        cmd = [
+            sys.executable,
+            str(self.script_path),
+            "--target",
+            domain,
+            "--alive",
+            str(settings.get("alive", False)),
+            "--brute",
+            str(settings.get("brute", False)),
+            "--fmt",
+            fmt,
+            "--path",
+            str(output_path),
+            *settings.get("extra_args", []),
+            "run",
+        ]
+
         try:
-            settings = config.get_tool_settings(self.name)
-            # 构建命令 - 使用 run 子命令
-            cmd = [
-                sys.executable,
-                str(self.script_path),
-                '--target', domain,
-                '--alive', str(settings.get("alive", False)),
-                '--brute', str(settings.get("brute", False)),
-                '--fmt', str(settings.get("fmt", "csv")),
-                *settings.get("extra_args", []),
-                'run',  # OneForAll 需要 run 子命令
-            ]
-            
-            # 执行扫描
             result = subprocess.run(
                 cmd,
                 cwd=str(self.tool_dir),
@@ -124,106 +131,107 @@ class OneForAllTool(BaseTool):
                 text=True,
                 timeout=int(settings.get("timeout", 1800)),
             )
-            
-            if result.returncode != 0:
-                logger.warning(f"OneForAll 返回非零状态码: {result.returncode}")
-                logger.debug(f"stderr: {result.stderr}")
-                logger.debug(f"stdout: {result.stdout}")
-            
-            # 解析结果
-            subdomains = self._parse_results(domain)
-            logger.info(f"[green]OneForAll 发现 {len(subdomains)} 个子域名[/green]")
-            
-            return subdomains
-            
         except subprocess.TimeoutExpired:
-            logger.error("OneForAll 扫描超时")
+            message = "OneForAll 扫描超时"
+            self.set_last_run(status="timeout", message=message)
+            logger.error(message)
             return []
-        except Exception as e:
-            logger.error(f"OneForAll 扫描出错: {e}")
+        except Exception as exc:
+            message = f"OneForAll 扫描出错: {exc}"
+            self.set_last_run(status="error", message=message)
+            logger.error(message)
             return []
-    
-    def _parse_results(self, domain: str) -> List[str]:
-        """
-        解析 OneForAll 的结果文件
-        
-        Args:
-            domain: 扫描的域名
-            
-        Returns:
-            子域名列表
-        """
-        subdomains = set()
-        
-        # 确保结果目录存在
-        if not self.results_dir.exists():
-            logger.warning(f"结果目录不存在: {self.results_dir}")
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip() or f"return code {result.returncode}"
+            message = f"OneForAll 执行失败: {detail.splitlines()[0]}"
+            self.set_last_run(
+                status="error",
+                return_code=result.returncode,
+                message=message,
+            )
+            logger.warning(f"OneForAll 返回非零状态码: {result.returncode}")
+            logger.debug(f"stderr: {result.stderr}")
+            logger.debug(f"stdout: {result.stdout}")
             return []
-        
-        # OneForAll 的结果文件可能有多种命名格式
-        possible_files = [
-            self.results_dir / f"{domain}.csv",
-            self.results_dir / f"{domain}_result.csv",
-            self.results_dir / f"all_subdomain_result_{domain}.csv",
-        ]
-        
-        result_file = None
-        
-        # 先检查预期的文件名
-        for f in possible_files:
-            if f.exists():
-                result_file = f
-                break
-        
-        # 如果没找到，尝试模糊匹配
-        if result_file is None:
-            for f in self.results_dir.glob(f"*{domain}*.csv"):
-                result_file = f
-                logger.debug(f"找到结果文件: {f}")
-                break
-        
-        if result_file is None:
-            # 列出目录中的所有文件以便调试
-            all_files = list(self.results_dir.glob("*.csv"))
-            if all_files:
-                logger.debug(f"结果目录中的文件: {[f.name for f in all_files]}")
-            logger.warning(f"未找到 {domain} 的结果文件")
-            return []
-        
-        logger.debug(f"解析结果文件: {result_file}")
-        
+
         try:
-            with open(result_file, 'r', encoding='utf-8', errors='ignore') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # OneForAll 结果中子域名字段名为 'subdomain' 或 'url'
-                    subdomain = row.get('subdomain', '') or row.get('url', '')
-                    subdomain = subdomain.strip()
-                    # 清理可能的 URL 格式
-                    if subdomain.startswith('http'):
-                        from urllib.parse import urlparse
-                        subdomain = urlparse(subdomain).hostname or subdomain
-                    if subdomain and domain in subdomain:
-                        subdomains.add(subdomain.lower())
-        except Exception as e:
-            logger.error(f"解析结果文件出错: {e}")
-        
-        return sorted(list(subdomains))
-    
+            subdomains, raw_count = self._parse_results(output_path, domain, fmt)
+        except FileNotFoundError:
+            message = f"OneForAll 执行完成但未生成结果文件: {output_path}"
+            self.set_last_run(
+                status="error",
+                return_code=result.returncode,
+                message=message,
+            )
+            logger.error(message)
+            return []
+        except Exception as exc:
+            message = f"解析 OneForAll 结果失败: {exc}"
+            self.set_last_run(
+                status="error",
+                return_code=result.returncode,
+                message=message,
+            )
+            logger.error(message)
+            return []
+
+        message = f"OneForAll 发现 {len(subdomains)} 个子域名"
+        self.set_last_run(
+            status="completed",
+            return_code=result.returncode,
+            message=message,
+            raw_count=raw_count,
+            valid_count=len(subdomains),
+        )
+        logger.info(f"[green]{message}[/green]")
+        return subdomains
+
+    def _parse_results(self, result_file: Path, domain: str, fmt: str) -> tuple[List[str], int]:
+        if not result_file.exists():
+            raise FileNotFoundError(result_file)
+
+        raw_count = 0
+        subdomains: set[str] = set()
+
+        if fmt == "json":
+            with open(result_file, "r", encoding="utf-8", errors="ignore") as file:
+                payload = json.load(file) or []
+            for row in payload:
+                if not isinstance(row, dict):
+                    continue
+                candidate = self.normalize_candidate(row.get("subdomain") or row.get("url") or "")
+                if not candidate:
+                    continue
+                raw_count += 1
+                if self.belongs_to_domain(candidate, domain):
+                    subdomains.add(candidate)
+            return sorted(subdomains), raw_count
+
+        with open(result_file, "r", encoding="utf-8", errors="ignore") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                candidate = self.normalize_candidate(row.get("subdomain") or row.get("url") or "")
+                if not candidate:
+                    continue
+                raw_count += 1
+                if self.belongs_to_domain(candidate, domain):
+                    subdomains.add(candidate)
+
+        return sorted(subdomains), raw_count
+
     def get_version(self) -> str:
-        """获取版本信息"""
         if not self.is_installed():
             return "未安装"
-        
+
         try:
             version_file = self.tool_dir / "oneforall" / "__version__.py"
             if version_file.exists():
-                with open(version_file, 'r') as f:
-                    content = f.read()
-                    # 简单解析版本号
-                    for line in content.split('\n'):
-                        if '__version__' in line:
-                            return line.split('=')[1].strip().strip('"\'')
-        except:
+                with open(version_file, "r", encoding="utf-8", errors="ignore") as file:
+                    content = file.read()
+                for line in content.splitlines():
+                    if "__version__" in line:
+                        return line.split("=", 1)[1].strip().strip("\"'")
+        except Exception:
             pass
         return "unknown"

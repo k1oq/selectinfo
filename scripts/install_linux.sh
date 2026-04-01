@@ -24,7 +24,7 @@ else
   SUDO=(sudo)
 fi
 
-echo "[1/5] Installing Ubuntu/Debian system packages..."
+echo "[1/4] Installing Ubuntu/Debian system packages..."
 "${SUDO[@]}" apt-get update
 "${SUDO[@]}" apt-get install -y \
   git \
@@ -37,15 +37,11 @@ echo "[1/5] Installing Ubuntu/Debian system packages..."
 
 cd "$PROJECT_ROOT"
 
-echo "[2/5] Installing project Python dependencies..."
+echo "[2/4] Installing project Python dependencies..."
 "$PYTHON_BIN" -m pip install --upgrade pip setuptools wheel
 "$PYTHON_BIN" -m pip install -r requirements.txt
 
-echo "[3/5] Installing bundled tool dependencies..."
-"$PYTHON_BIN" -m pip install -r tools/oneforall/requirements.txt
-"$PYTHON_BIN" -m pip install -r tools/dirsearch/requirements.txt
-
-echo "[4/5] Fixing executable permissions for Linux binaries..."
+echo "[3/4] Fixing executable permissions for Linux binaries..."
 if [[ -f tools/subfinder/subfinder ]]; then
   chmod +x tools/subfinder/subfinder
 fi
@@ -56,11 +52,13 @@ if [[ -f config/local_settings.json ]]; then
   echo "This file is host-local. If it was copied from Windows, reset stale tool paths before deployment."
 fi
 
-echo "[5/5] Running tool self-check..."
-"$PYTHON_BIN" cli.py -check
+echo "[4/4] Running tool self-check..."
+"$PYTHON_BIN" tools/self_check.py
 
 echo "Linux install completed."
 echo "Next steps:"
-echo "  python cli.py -show"
+echo "  edit config/local_settings.json if you need local tool path overrides"
+echo "  python tools/self_check.py"
+echo "  python scan.py example.com --port-scan --web-fingerprint"
 echo "  python -m unittest discover -s tests -p \"test_*.py\" -v"
 echo "  python main.py"

@@ -4,12 +4,12 @@ Batch scan runner.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 import config
+from utils import atomic_write_json
 from utils.logger import console
 
 
@@ -102,11 +102,15 @@ class BatchScanRunner:
                                             else:
                                                 item_summary["directory_scan_status"] = "error"
                                         else:
-                                            item_summary["directory_scan_status"] = "skipped_no_web_targets"
+                                            item_summary["directory_scan_status"] = (
+                                                "skipped_no_web_targets"
+                                            )
                                 else:
                                     item_summary["web_fingerprint_status"] = "error"
                                     if enable_directory_scan:
-                                        item_summary["directory_scan_status"] = "skipped_no_fingerprint"
+                                        item_summary["directory_scan_status"] = (
+                                            "skipped_no_fingerprint"
+                                        )
                         else:
                             item_summary["port_scan_status"] = "no_open_ports"
                             if enable_web_fingerprint:
@@ -137,6 +141,7 @@ class BatchScanRunner:
                         "valid_count": 0,
                         "total_found": 0,
                         "wildcard_detected": False,
+                        "tool_runs": {},
                         "port_scan_status": "not_started",
                         "open_port_count": 0,
                         "web_fingerprint_status": "not_started",
@@ -156,16 +161,29 @@ class BatchScanRunner:
     def build_item_summary(domain: str, result: dict, saved_path: Path | None) -> dict:
         valid_count = len(result.get("subdomains", []))
         wildcard_detected = bool(result.get("wildcard", {}).get("detected"))
+        tool_runs = result.get("tool_runs", {})
+        failed_tools = {
+            name: run
+            for name, run in tool_runs.items()
+            if run.get("status") in {"error", "timeout"}
+        }
+        all_tools_failed = bool(tool_runs) and len(failed_tools) == len(tool_runs)
 
         if valid_count > 0:
             status = "success"
             message = "扫描成功"
+        elif all_tools_failed:
+            status = "error"
+            message = "所有子域名工具都执行失败"
         elif wildcard_detected:
             status = "no_valid_results"
             message = "检测到泛解析，未保留有效子域名"
         else:
             status = "no_valid_results"
             message = "未发现有效子域名"
+
+        if status == "no_valid_results" and failed_tools:
+            message = f"{message}（失败工具: {', '.join(sorted(failed_tools))}）"
 
         return {
             "domain": domain,
@@ -175,6 +193,7 @@ class BatchScanRunner:
             "valid_count": valid_count,
             "total_found": result.get("statistics", {}).get("total_found", 0),
             "wildcard_detected": wildcard_detected,
+            "tool_runs": tool_runs,
             "port_scan_status": "not_started",
             "open_port_count": 0,
             "web_fingerprint_status": "not_started",
@@ -227,8 +246,7 @@ class BatchScanRunner:
         config.ensure_dirs()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = config.RESULTS_DIR / f"batch_summary_{timestamp}.json"
-        with open(output_path, "w", encoding="utf-8") as file:
-            json.dump(summary, file, ensure_ascii=False, indent=2)
+        atomic_write_json(output_path, summary, ensure_ascii=False, indent=2)
         return output_path
 
     @staticmethod

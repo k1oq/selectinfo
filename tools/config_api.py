@@ -1,5 +1,5 @@
 """
-Unified tool configuration API shared by CLI, MCP and interactive menus.
+Unified tool configuration API shared by MCP and interactive menus.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import config
+from utils import atomic_write_json
 from .dirsearch_wrapper import DirsearchTool
 from .oneforall_wrapper import OneForAllTool
 from .self_check import ToolSelfChecker
@@ -173,8 +174,7 @@ class ToolConfigAPI:
             "effective_settings": config.get_all_tool_settings(),
         }
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as file:
-            json.dump(snapshot, file, ensure_ascii=False, indent=2)
+        atomic_write_json(path, snapshot, ensure_ascii=False, indent=2)
         return {"ok": True, "path": str(path.resolve())}
 
     @staticmethod

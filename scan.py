@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""
+Non-interactive scan entrypoint for human users.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+
+from rich.table import Table
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+import config
+from core import (
+    BatchScanRunner,
+    SubdomainScanner,
+    run_directory_scan,
+    run_port_scan,
+    run_web_fingerprint,
+    write_batch_item_reports,
+    write_batch_summary_report,
+    write_single_scan_report_from_file,
+)
+from utils.logger import console
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="SelectInfo 非交互扫描入口，适合直接跑单个域名或批量文件。"
+    )
+    parser.add_argument("target", nargs="?", help="单个目标域名")
+    parser.add_argument("--targets-file", help="批量目标文件，每行一个域名")
+    parser.add_argument(
+        "--tools",
+        help="指定子域名工具，逗号分隔，例如 subfinder,oneforall。默认自动使用可用工具。",
+    )
+    parser.add_argument("--skip-wildcard", action="store_true", help="跳过泛解析检测")
+    parser.add_argument("--skip-validation", action="store_true", help="跳过 DNS 验证")
+    parser.add_argument("--serial", action="store_true", help="串行运行子域名工具")
+
+    parser.add_argument("--port-scan", action="store_true", help="启用端口扫描")
+    parser.add_argument(
+        "--port-mode",
+        choices=sorted(config.PORT_PRESETS),
+        default="common",
+        help="端口扫描预设，默认 common",
+    )
+    parser.add_argument("--web-fingerprint", action="store_true", help="启用 Web 指纹识别")
+    parser.add_argument("--directory-scan", action="store_true", help="启用 Web 目录扫描")
+
+    parser.add_argument("--results-dir", help="覆盖默认 results 目录")
+    parser.add_argument("--output", help="单目标模式下显式指定 JSON 结果路径")
+    parser.add_argument("--summary-output", help="显式指定 CSV 摘要路径")
+    return parser
+
+
+def parse_requested_tools(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    tools = [token.strip().lower() for token in raw.split(",") if token.strip()]
+    if not tools:
+        return None
+    deduped: list[str] = []
+    for tool_name in tools:
+        if tool_name not in deduped:
+            deduped.append(tool_name)
+    return deduped
+
+
+def resolve_targets(target: str | None, targets_file: str | None) -> list[str]:
+    if target and targets_file:
+        raise ValueError("不能同时指定单个 target 和 --targets-file。")
+    if not target and not targets_file:
+        raise ValueError("请提供一个目标域名，或使用 --targets-file。")
+
+    if targets_file:
+        path = Path(targets_file)
+        if not path.exists():
+            raise ValueError(f"目标文件不存在: {path}")
+        return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    return [str(target).strip()]
+
+
+def resolve_stage_flags(
+    enable_port_scan: bool,
+    enable_web_fingerprint: bool,
+    enable_directory_scan: bool,
+) -> tuple[bool, bool, bool]:
+    if enable_directory_scan:
+        enable_web_fingerprint = True
+    if enable_web_fingerprint:
+        enable_port_scan = True
+    return enable_port_scan, enable_web_fingerprint, enable_directory_scan
+
+
+def select_tools(scanner: SubdomainScanner, requested_tools: list[str] | None) -> tuple[list[str], dict[str, bool]]:
+    tool_status = scanner.check_tools()
+    available_tools = [
+        name for name in scanner.AVAILABLE_TOOLS if tool_status.get(name)
+    ]
+
+    if requested_tools is None:
+        if not available_tools:
+            raise ValueError("没有可用的子域名工具，请先配置 subfinder 或 oneforall。")
+        return available_tools, tool_status
+
+    unknown = [name for name in requested_tools if name not in scanner.AVAILABLE_TOOLS]
+    if unknown:
+        raise ValueError(f"未知的子域名工具: {', '.join(unknown)}")
+
+    unavailable = [name for name in requested_tools if not tool_status.get(name)]
+    if unavailable:
+        raise ValueError(
+            "以下子域名工具当前不可用: "
+            + ", ".join(unavailable)
+            + "。请先运行 `python tools/self_check.py` 检查环境。"
+        )
+
+    return requested_tools, tool_status
+
+
+def validate_followup_tools(
+    tool_status: dict[str, bool],
+    *,
+    enable_port_scan: bool,
+    enable_web_fingerprint: bool,
+    enable_directory_scan: bool,
+):
+    if (enable_port_scan or enable_web_fingerprint) and not tool_status.get("nmap"):
+        raise ValueError("当前 nmap 不可用，无法执行端口扫描或 Web 指纹。请先运行 `python tools/self_check.py`。")
+    if enable_directory_scan and not tool_status.get("dirsearch"):
+        console.print("[yellow]dirsearch 当前不可用，目录扫描阶段会被自动跳过。[/yellow]")
+
+
+def print_plan(
+    targets: list[str],
+    tools: list[str],
+    *,
+    skip_wildcard: bool,
+    skip_validation: bool,
+    parallel: bool,
+    enable_port_scan: bool,
+    port_mode: str,
+    enable_web_fingerprint: bool,
+    enable_directory_scan: bool,
+):
+    table = Table(title="执行计划", show_header=False)
+    table.add_column("项目", style="cyan")
+    table.add_column("配置", overflow="fold")
+
+    if len(targets) == 1:
+        target_summary = targets[0]
+    else:
+        preview = ", ".join(targets[:3])
+        suffix = f" ... 共 {len(targets)} 个" if len(targets) > 3 else ""
+        target_summary = preview + suffix
+
+    table.add_row("目标", target_summary)
+    table.add_row("子域名工具", ", ".join(tools))
+    table.add_row("泛解析检测", "否" if skip_wildcard else "是")
+    table.add_row("DNS 验证", "否" if skip_validation else "是")
+    table.add_row("工具并行", "是" if parallel else "否")
+    table.add_row("端口扫描", "是" if enable_port_scan else "否")
+    if enable_port_scan:
+        table.add_row("端口预设", config.PORT_PRESETS[port_mode]["name"])
+    table.add_row("Web 指纹", "是" if enable_web_fingerprint else "否")
+    table.add_row("目录扫描", "是" if enable_directory_scan else "否")
+    console.print()
+    console.print(table)
+    console.print()
+
+
+@contextmanager
+def overridden_results_dir(results_dir: str | None):
+    if not results_dir:
+        yield Path(config.RESULTS_DIR)
+        return
+
+    original = config.RESULTS_DIR
+    config.RESULTS_DIR = Path(results_dir).expanduser().resolve()
+    try:
+        config.ensure_dirs()
+        yield Path(config.RESULTS_DIR)
+    finally:
+        config.RESULTS_DIR = original
+
+
+def run_single_scan(
+    scanner: SubdomainScanner,
+    *,
+    target: str,
+    tools: list[str],
+    skip_wildcard: bool,
+    skip_validation: bool,
+    parallel: bool,
+    enable_port_scan: bool,
+    port_mode: str,
+    enable_web_fingerprint: bool,
+    enable_directory_scan: bool,
+    output_path: str | None = None,
+    summary_output: str | None = None,
+) -> dict:
+    result = scanner.scan(
+        target=target,
+        tools=tools,
+        skip_wildcard=skip_wildcard,
+        skip_validation=skip_validation,
+        parallel=parallel,
+    )
+
+    saved_path = scanner.save_result(output_path=Path(output_path) if output_path else None)
+
+    if not result.get("wildcard", {}).get("detected") and result.get("subdomains") and enable_port_scan:
+        port_results = run_port_scan(
+            result["subdomains"],
+            mode=port_mode,
+            output_path=saved_path,
+        )
+        if port_results and enable_web_fingerprint:
+            fingerprint_result = run_web_fingerprint(
+                result["subdomains"],
+                port_results,
+                output_path=saved_path,
+            )
+            if (
+                fingerprint_result
+                and fingerprint_result.get("targets")
+                and enable_directory_scan
+            ):
+                run_directory_scan(
+                    fingerprint_result["targets"],
+                    output_path=saved_path,
+                )
+
+    report_path = write_single_scan_report_from_file(
+        saved_path,
+        output_path=summary_output,
+    )
+    return {
+        "saved_path": Path(saved_path),
+        "report_path": Path(report_path),
+    }
+
+
+def run_batch_scan(
+    scanner: SubdomainScanner,
+    *,
+    targets: list[str],
+    tools: list[str],
+    skip_wildcard: bool,
+    skip_validation: bool,
+    parallel: bool,
+    enable_port_scan: bool,
+    port_mode: str,
+    enable_web_fingerprint: bool,
+    enable_directory_scan: bool,
+    summary_output: str | None = None,
+) -> dict:
+    runner = BatchScanRunner(
+        scanner=scanner,
+        run_port_scan=run_port_scan,
+        run_web_fingerprint=run_web_fingerprint,
+        run_directory_scan=run_directory_scan,
+    )
+    batch_summary, summary_path = runner.run(
+        domains=targets,
+        tools=tools,
+        skip_wildcard=skip_wildcard,
+        skip_validation=skip_validation,
+        parallel=parallel,
+        enable_port_scan=enable_port_scan,
+        port_scan_mode=port_mode,
+        enable_web_fingerprint=enable_web_fingerprint,
+        enable_directory_scan=enable_directory_scan,
+    )
+    item_report_paths = write_batch_item_reports(batch_summary)
+    batch_report_path = write_batch_summary_report(
+        batch_summary,
+        summary_path,
+        output_path=summary_output,
+    )
+    return {
+        "batch_summary": batch_summary,
+        "summary_path": Path(summary_path),
+        "report_path": Path(batch_report_path),
+        "item_report_paths": item_report_paths,
+    }
+
+
+def execute(args: argparse.Namespace) -> dict:
+    targets = resolve_targets(args.target, args.targets_file)
+    if len(targets) > 1 and args.output:
+        raise ValueError("--output 仅支持单目标模式，请在批量模式下使用 --results-dir。")
+
+    requested_tools = parse_requested_tools(args.tools)
+    enable_port_scan, enable_web_fingerprint, enable_directory_scan = resolve_stage_flags(
+        args.port_scan,
+        args.web_fingerprint,
+        args.directory_scan,
+    )
+
+    scanner = SubdomainScanner()
+    tools, tool_status = select_tools(scanner, requested_tools)
+    validate_followup_tools(
+        tool_status,
+        enable_port_scan=enable_port_scan,
+        enable_web_fingerprint=enable_web_fingerprint,
+        enable_directory_scan=enable_directory_scan,
+    )
+
+    print_plan(
+        targets,
+        tools,
+        skip_wildcard=args.skip_wildcard,
+        skip_validation=args.skip_validation,
+        parallel=not args.serial,
+        enable_port_scan=enable_port_scan,
+        port_mode=args.port_mode,
+        enable_web_fingerprint=enable_web_fingerprint,
+        enable_directory_scan=enable_directory_scan,
+    )
+
+    with overridden_results_dir(args.results_dir):
+        if len(targets) == 1:
+            return run_single_scan(
+                scanner,
+                target=targets[0],
+                tools=tools,
+                skip_wildcard=args.skip_wildcard,
+                skip_validation=args.skip_validation,
+                parallel=not args.serial,
+                enable_port_scan=enable_port_scan,
+                port_mode=args.port_mode,
+                enable_web_fingerprint=enable_web_fingerprint,
+                enable_directory_scan=enable_directory_scan,
+                output_path=args.output,
+                summary_output=args.summary_output,
+            )
+
+        return run_batch_scan(
+            scanner,
+            targets=targets,
+            tools=tools,
+            skip_wildcard=args.skip_wildcard,
+            skip_validation=args.skip_validation,
+            parallel=not args.serial,
+            enable_port_scan=enable_port_scan,
+            port_mode=args.port_mode,
+            enable_web_fingerprint=enable_web_fingerprint,
+            enable_directory_scan=enable_directory_scan,
+            summary_output=args.summary_output,
+        )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    parsed = parser.parse_args(argv)
+
+    try:
+        result = execute(parsed)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]扫描已取消[/yellow]")
+        return 1
+    except Exception as exc:
+        console.print(f"[red]扫描启动失败: {exc}[/red]")
+        return 1
+
+    if "saved_path" in result:
+        console.print(f"[green]结果文件: {result['saved_path']}[/green]")
+        console.print(f"[green]摘要文件: {result['report_path']}[/green]")
+    else:
+        stats = result["batch_summary"]["statistics"]
+        console.print(
+            f"[green]批量扫描完成: {stats['success_count']}/{stats['total_domains']} 成功[/green]"
+        )
+        console.print(f"[green]汇总文件: {result['summary_path']}[/green]")
+        console.print(f"[green]摘要文件: {result['report_path']}[/green]")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

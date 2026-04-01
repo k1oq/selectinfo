@@ -4,6 +4,8 @@ Tool self-check helpers.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -71,6 +73,7 @@ class ToolSelfChecker:
         completed = self._run_command(
             [str(tool.executable), *config.get_subfinder_config_args(), "-version"],
             timeout=15,
+            cwd=str(tool.executable.parent),
             env=config.get_subfinder_runtime_env(),
         )
         if not completed["ok"]:
@@ -108,7 +111,7 @@ class ToolSelfChecker:
             )
 
         sqlite_probe = self._run_command(
-            [sys.executable, "-c", "import sqlite3; print(sqlite3.sqlite_version)"],
+            self._build_oneforall_sqlite_probe_command(),
             timeout=15,
             cwd=str(tool.tool_dir),
         )
@@ -118,9 +121,10 @@ class ToolSelfChecker:
                 installed=True,
                 usable=False,
                 path=path,
-                message=f"Python sqlite3 不可用: {sqlite_probe['message']}",
+                message=f"Python sqlite3 不可用，且 pysqlite3 fallback 未验证通过: {sqlite_probe['message']}",
             )
 
+        backend_info = (sqlite_probe["stdout"] or "").strip() or "unknown"
         completed = self._run_command(
             [sys.executable, str(tool.script_path), "--help"],
             timeout=20,
@@ -141,7 +145,7 @@ class ToolSelfChecker:
             usable=True,
             path=path,
             version=tool.get_version() or "unknown",
-            message="脚本可执行，sqlite3 可用",
+            message=f"脚本可执行，sqlite 后端: {backend_info}",
         )
 
     def check_nmap(self) -> ToolCheckResult:
@@ -154,7 +158,7 @@ class ToolSelfChecker:
                 installed=False,
                 usable=False,
                 path=expected,
-                message=f"未检测到 nmap，可配置路径或放到: {expected}",
+                message=f"未检测到 nmap，可配置路径或放到 {expected}",
             )
 
         completed = self._run_command([detected_path, "--version"], timeout=15)
@@ -169,6 +173,18 @@ class ToolSelfChecker:
 
         version_output = (completed["stdout"] or completed["stderr"]).strip()
         version = version_output.splitlines()[0] if version_output else "unknown"
+
+        syn_scan_message = self._check_linux_syn_scan_risk(detected_path)
+        if syn_scan_message:
+            return ToolCheckResult(
+                name="nmap",
+                installed=True,
+                usable=False,
+                path=detected_path,
+                version=version,
+                message=syn_scan_message,
+            )
+
         return ToolCheckResult(
             name="nmap",
             installed=True,
@@ -191,6 +207,16 @@ class ToolSelfChecker:
         )
 
     @staticmethod
+    def _build_oneforall_sqlite_probe_command() -> list[str]:
+        script = (
+            "from sqlite_compat import ensure_sqlite3; "
+            "backend = ensure_sqlite3(); "
+            "import sqlite3; "
+            "print(f'{backend}:{sqlite3.sqlite_version}')"
+        )
+        return [sys.executable, "-c", script]
+
+    @staticmethod
     def _run_command(
         command: list[str],
         timeout: int = 15,
@@ -208,8 +234,15 @@ class ToolSelfChecker:
             )
         except FileNotFoundError:
             return {"ok": False, "stdout": "", "stderr": "", "message": "命令不存在或路径无效"}
+        except PermissionError as exc:
+            return {
+                "ok": False,
+                "stdout": "",
+                "stderr": "",
+                "message": ToolSelfChecker._permission_hint(command, str(exc)),
+            }
         except subprocess.TimeoutExpired:
-            return {"ok": False, "stdout": "", "stderr": "", "message": f"执行超时（{timeout}s）"}
+            return {"ok": False, "stdout": "", "stderr": "", "message": f"执行超时({timeout}s)"}
         except Exception as exc:
             return {"ok": False, "stdout": "", "stderr": "", "message": f"执行失败: {exc}"}
 
@@ -217,6 +250,8 @@ class ToolSelfChecker:
             stderr = (result.stderr or "").strip()
             stdout = (result.stdout or "").strip()
             detail = stderr or stdout or f"返回码 {result.returncode}"
+            if "Permission denied" in detail:
+                detail = ToolSelfChecker._permission_hint(command, detail)
             return {
                 "ok": False,
                 "stdout": stdout,
@@ -230,6 +265,41 @@ class ToolSelfChecker:
             "stderr": result.stderr or "",
             "message": "ok",
         }
+
+    @staticmethod
+    def _permission_hint(command: list[str], detail: str) -> str:
+        executable = command[0] if command else ""
+        hint = detail
+        if sys.platform.startswith("linux"):
+            hint += "；请先检查可执行位(chmod +x)"
+            resolved = shutil.which(executable) or executable
+            if resolved and os.path.isabs(resolved):
+                hint += "，如果已设置可执行位仍失败，请检查挂载点是否为 noexec"
+        return hint
+
+    @staticmethod
+    def _check_linux_syn_scan_risk(nmap_path: str) -> str:
+        if not sys.platform.startswith("linux"):
+            return ""
+
+        nmap_args = config.get_tool_settings("nmap").get("args", [])
+        if "-sS" not in nmap_args:
+            return ""
+
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return ""
+
+        resolved = shutil.which(nmap_path) or nmap_path
+        capability_probe = ToolSelfChecker._run_command(["getcap", resolved], timeout=10)
+        if capability_probe["ok"]:
+            capabilities = capability_probe["stdout"]
+            if "cap_net_raw" in capabilities or "cap_net_admin" in capabilities:
+                return ""
+
+        return (
+            "当前 nmap 参数包含 -sS。Linux 下 SYN 扫描通常需要 root 或 "
+            "CAP_NET_RAW/CAP_NET_ADMIN；请改用 -sT，或为 nmap 配置对应能力。"
+        )
 
     @staticmethod
     def _summarize_output(output: str, max_length: int = 120) -> str:

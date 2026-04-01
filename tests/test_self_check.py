@@ -1,4 +1,3 @@
-import sys
 import unittest
 from unittest import mock
 
@@ -25,6 +24,7 @@ class ToolSelfCheckerTests(unittest.TestCase):
         self.assertTrue(result.installed)
         self.assertFalse(result.usable)
         self.assertIn("sqlite3", result.message)
+        self.assertIn("fallback", result.message)
 
     def test_check_oneforall_probes_sqlite_before_help(self):
         checker = ToolSelfChecker()
@@ -37,7 +37,7 @@ class ToolSelfCheckerTests(unittest.TestCase):
             side_effect=[
                 {
                     "ok": True,
-                    "stdout": "3.45.1\n",
+                    "stdout": "pysqlite3:3.51.1\n",
                     "stderr": "",
                     "message": "ok",
                 },
@@ -53,9 +53,23 @@ class ToolSelfCheckerTests(unittest.TestCase):
 
         self.assertTrue(result.usable)
         self.assertEqual(result.version, "v0.4.5")
-        self.assertIn("sqlite3", result.message)
+        self.assertIn("sqlite", result.message)
         first_call = run_command.call_args_list[0]
         self.assertEqual(
             first_call.args[0],
-            [sys.executable, "-c", "import sqlite3; print(sqlite3.sqlite_version)"],
+            ToolSelfChecker._build_oneforall_sqlite_probe_command(),
         )
+
+    def test_run_command_permission_error_contains_actionable_hint(self):
+        with mock.patch("tools.self_check.sys.platform", "linux"), mock.patch(
+            "tools.self_check.subprocess.run",
+            side_effect=PermissionError("[Errno 13] Permission denied"),
+        ):
+            result = ToolSelfChecker._run_command(["/tmp/subfinder"], timeout=5)
+
+        self.assertFalse(result["ok"])
+        self.assertIn("chmod +x", result["message"])
+
+
+if __name__ == "__main__":
+    unittest.main()

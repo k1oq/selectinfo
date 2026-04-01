@@ -7,7 +7,6 @@ project's JSON output format.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from datetime import datetime
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import config
+from utils import atomic_write_json
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -280,8 +280,7 @@ class PortScanner:
             output_path = Path(config.RESULTS_DIR) / f"portscan_{ts}.json"
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as file:
-            json.dump(self.to_json(), file, ensure_ascii=False, indent=2)
+        atomic_write_json(output_path, self.to_json(), ensure_ascii=False, indent=2)
 
         logger.info(f"[green]结果已保存: {output_path}[/green]")
         return output_path

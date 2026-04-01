@@ -18,6 +18,7 @@ venv/
 env/
 
 # Runtime output
+runtime/
 results/*.json
 results/*.log
 results/temp/

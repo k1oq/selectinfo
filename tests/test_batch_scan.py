@@ -12,6 +12,15 @@ class BatchScanRunnerTests(unittest.TestCase):
                 "subdomains": [{"subdomain": "www.example.com", "ip": ["1.1.1.1"]}],
                 "wildcard": {"detected": False},
                 "statistics": {"total_found": 3},
+                "tool_runs": {
+                    "subfinder": {
+                        "status": "completed",
+                        "return_code": 0,
+                        "message": "ok",
+                        "raw_count": 3,
+                        "valid_count": 3,
+                    }
+                },
             },
             saved_path=None,
         )
@@ -32,6 +41,15 @@ class BatchScanRunnerTests(unittest.TestCase):
                 "subdomains": [],
                 "wildcard": {"detected": True},
                 "statistics": {"total_found": 5},
+                "tool_runs": {
+                    "subfinder": {
+                        "status": "completed",
+                        "return_code": 0,
+                        "message": "ok",
+                        "raw_count": 5,
+                        "valid_count": 0,
+                    }
+                },
             },
             saved_path=None,
         )
@@ -39,6 +57,36 @@ class BatchScanRunnerTests(unittest.TestCase):
         self.assertEqual(summary["status"], "no_valid_results")
         self.assertTrue(summary["wildcard_detected"])
         self.assertIn("泛解析", summary["message"])
+
+    def test_build_item_summary_marks_all_tool_failures_as_error(self):
+        summary = BatchScanRunner.build_item_summary(
+            domain="example.com",
+            result={
+                "subdomains": [],
+                "wildcard": {"detected": False},
+                "statistics": {"total_found": 0},
+                "tool_runs": {
+                    "subfinder": {
+                        "status": "error",
+                        "return_code": 1,
+                        "message": "boom",
+                        "raw_count": 0,
+                        "valid_count": 0,
+                    },
+                    "oneforall": {
+                        "status": "timeout",
+                        "return_code": None,
+                        "message": "timeout",
+                        "raw_count": 0,
+                        "valid_count": 0,
+                    },
+                },
+            },
+            saved_path=None,
+        )
+
+        self.assertEqual(summary["status"], "error")
+        self.assertIn("执行失败", summary["message"])
 
     def test_build_summary_counts_statuses(self):
         summary = BatchScanRunner.build_summary(
@@ -51,6 +99,7 @@ class BatchScanRunnerTests(unittest.TestCase):
                     "valid_count": 2,
                     "total_found": 3,
                     "wildcard_detected": False,
+                    "tool_runs": {},
                     "port_scan_status": "completed",
                     "open_port_count": 4,
                     "web_fingerprint_status": "completed",
@@ -66,6 +115,7 @@ class BatchScanRunnerTests(unittest.TestCase):
                     "valid_count": 0,
                     "total_found": 0,
                     "wildcard_detected": False,
+                    "tool_runs": {},
                     "port_scan_status": "not_started",
                     "open_port_count": 0,
                     "web_fingerprint_status": "not_started",
@@ -81,6 +131,7 @@ class BatchScanRunnerTests(unittest.TestCase):
                     "valid_count": 0,
                     "total_found": 0,
                     "wildcard_detected": False,
+                    "tool_runs": {},
                     "port_scan_status": "not_started",
                     "open_port_count": 0,
                     "web_fingerprint_status": "error",
@@ -114,6 +165,7 @@ class BatchScanRunnerTests(unittest.TestCase):
                     "subdomains": [{"subdomain": "www.example.com", "ip": ["1.1.1.1"]}],
                     "wildcard": {"detected": False},
                     "statistics": {"total_found": 1},
+                    "tool_runs": {},
                 }
 
             def save_result(self):
