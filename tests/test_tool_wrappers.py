@@ -161,6 +161,45 @@ class OneForAllToolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
         self.assertEqual(result.stdout.strip(), "example.com")
 
+    def test_domain_registered_falls_back_to_matched_host_when_extract_is_empty(self):
+        script = (
+            "from common import utils\n"
+            "from common.domain import Domain\n"
+            "Domain.extract = lambda self: type('Result', (), {'registered_domain': ''})()\n"
+            "print(utils.get_main_domain('landui.com'))\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(Path(PROJECT_ROOT) / "tools" / "oneforall"),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+        self.assertEqual(result.stdout.strip(), "landui.com")
+
+    def test_scan_marks_empty_export_with_actionable_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_dir = Path(tmp)
+            tool = self._build_fake_tool(temp_dir)
+            output_path = temp_dir / "empty.csv"
+            output_path.write_text("id,subdomain\n", encoding="utf-8")
+
+            with mock.patch.object(tool, "is_installed", return_value=True), mock.patch.object(
+                tool, "_build_output_path", return_value=output_path
+            ), mock.patch(
+                "tools.oneforall_wrapper.subprocess.run",
+                return_value=mock.Mock(returncode=0, stdout="ok", stderr=""),
+            ):
+                result = tool.scan("example.com")
+
+        self.assertEqual(result, [])
+        self.assertEqual(tool.get_last_run()["status"], "completed")
+        self.assertEqual(tool.get_last_run()["raw_count"], 0)
+        self.assertIn("未导出任何结果", tool.get_last_run()["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -177,6 +177,13 @@ class OneForAllTool(BaseTool):
             return []
 
         message = f"OneForAll 发现 {len(subdomains)} 个子域名"
+        if raw_count == 0:
+            message = f"OneForAll 完成但未导出任何结果: {output_path}"
+            logger.warning(message)
+        elif len(subdomains) == 0:
+            message = f"OneForAll 导出了 {raw_count} 条记录，但都未通过域名归属过滤"
+            logger.warning(message)
+
         self.set_last_run(
             status="completed",
             return_code=result.returncode,
