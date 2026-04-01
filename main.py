@@ -29,6 +29,7 @@ from core import (
     write_single_scan_report_from_file,
 )
 from tools import DirsearchTool, NmapSetupManager, ToolConfigAPI, ToolSelfChecker
+from utils.background_jobs import create_background_job, launch_background_command
 from utils.logger import console
 
 __version__ = "1.0.0"
@@ -46,6 +47,7 @@ class ScanExecutionPlan:
     port_scan_mode: str | None = None
     enable_web_fingerprint: bool = False
     enable_directory_scan: bool = False
+    background: bool = False
 
 
 def print_banner():
@@ -735,6 +737,279 @@ def scan_batch_domains(scanner: SubdomainScanner, tool_status: dict[str, bool]):
     report_path = write_batch_summary_report(batch_summary, summary_path)
     console.print(f"[dim]摘要已生成: {report_path}[/dim]")
     console.print(f"[dim]结果保存在 {config.RESULTS_DIR}[/dim]")
+
+
+def build_scan_plan(
+    targets: list[str],
+    available_tools: list[str],
+    tool_status: dict[str, bool],
+    *,
+    default_enable_port_scan: bool,
+) -> ScanExecutionPlan | None:
+    selected_tools = prompt_subdomain_tools(available_tools)
+    run_wildcard = Confirm.ask("是否执行泛解析检测？", default=True)
+    run_validation = Confirm.ask("是否执行 DNS 存活验证？", default=True)
+    parallel = len(selected_tools) > 1 and Confirm.ask("是否并行运行子域名工具？", default=True)
+
+    enable_port_scan = False
+    port_scan_mode = None
+    enable_web_fingerprint = False
+    enable_directory_scan = False
+
+    if tool_status.get("nmap"):
+        enable_port_scan = Confirm.ask("是否在子域名扫描后执行端口扫描？", default=default_enable_port_scan)
+        if enable_port_scan:
+            port_scan_mode = choose_scan_mode()
+            enable_web_fingerprint = Confirm.ask("是否在端口扫描后执行 Web 指纹识别？", default=False)
+            if enable_web_fingerprint:
+                if run_validation:
+                    enable_directory_scan = Confirm.ask("是否在 Web 指纹后执行 Web 目录扫描？", default=False)
+                    if enable_directory_scan and not tool_status.get("dirsearch"):
+                        console.print("[yellow]dirsearch 当前不可用，目录扫描运行时会被跳过。[/yellow]")
+                else:
+                    console.print("[yellow]目录扫描依赖子域名存活验证；当前已跳过 DNS 验证，因此不启用目录扫描。[/yellow]")
+    else:
+        console.print("[yellow]nmap 当前不可用，本次将跳过端口扫描、Web 指纹和目录扫描。[/yellow]")
+
+    plan = ScanExecutionPlan(
+        targets=targets,
+        tools=selected_tools,
+        skip_wildcard=not run_wildcard,
+        skip_validation=not run_validation,
+        parallel=parallel,
+        enable_port_scan=enable_port_scan,
+        port_scan_mode=port_scan_mode,
+        enable_web_fingerprint=enable_web_fingerprint,
+        enable_directory_scan=enable_directory_scan,
+        background=False,
+    )
+
+    show_scan_plan(plan, tool_status)
+    if not Confirm.ask("按以上配置开始执行？", default=True):
+        console.print("[yellow]已取消[/yellow]")
+        return None
+
+    plan.background = Confirm.ask("是否后台运行？日志和状态会写入 runtime/jobs", default=False)
+    return plan
+
+
+def show_scan_plan(plan: ScanExecutionPlan, tool_status: dict[str, bool]):
+    table = Table(title="执行计划", show_header=False)
+    table.add_column("项目", style="cyan")
+    table.add_column("配置", overflow="fold")
+
+    if len(plan.targets) == 1:
+        target_summary = plan.targets[0]
+    else:
+        preview = ", ".join(plan.targets[:3])
+        suffix = f" ... 共 {len(plan.targets)} 个" if len(plan.targets) > 3 else ""
+        target_summary = preview + suffix
+
+    table.add_row("目标", target_summary)
+    table.add_row("子域名工具", ", ".join(plan.tools))
+    table.add_row("泛解析检测", "是" if not plan.skip_wildcard else "否")
+    table.add_row("DNS 存活验证", "是" if not plan.skip_validation else "否")
+    table.add_row("子域名工具并行", "是" if plan.parallel else "否")
+    table.add_row("端口扫描", "是" if plan.enable_port_scan else "否")
+    if plan.enable_port_scan and plan.port_scan_mode:
+        table.add_row("端口范围", config.PORT_PRESETS[plan.port_scan_mode]["name"])
+    table.add_row("Web 指纹识别", "是" if plan.enable_web_fingerprint else "否")
+
+    if plan.enable_directory_scan and not tool_status.get("dirsearch"):
+        directory_summary = "是（dirsearch 当前不可用，运行时会跳过）"
+    else:
+        directory_summary = "是" if plan.enable_directory_scan else "否"
+    table.add_row("Web 目录扫描", directory_summary)
+    table.add_row("后台运行", "是" if plan.background else "否")
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+def _build_background_scan_command(plan: ScanExecutionPlan, job: dict[str, object]) -> list[str]:
+    command = [sys.executable, str((Path(__file__).parent / "scan.py").resolve())]
+
+    if len(plan.targets) == 1:
+        command.append(plan.targets[0])
+    else:
+        targets_file = Path(job["job_dir"]) / "targets.txt"
+        targets_file.write_text("\n".join(plan.targets) + "\n", encoding="utf-8")
+        command.extend(["--targets-file", str(targets_file)])
+
+    if plan.tools:
+        command.extend(["--tools", ",".join(plan.tools)])
+    if plan.skip_wildcard:
+        command.append("--skip-wildcard")
+    if plan.skip_validation:
+        command.append("--skip-validation")
+    if not plan.parallel:
+        command.append("--serial")
+    if plan.enable_port_scan:
+        command.append("--port-scan")
+    if plan.port_scan_mode:
+        command.extend(["--port-mode", str(plan.port_scan_mode)])
+    if plan.enable_web_fingerprint:
+        command.append("--web-fingerprint")
+    if plan.enable_directory_scan:
+        command.append("--directory-scan")
+
+    command.extend(
+        [
+            "--_background-child",
+            "--_job-id",
+            str(job["job_id"]),
+            "--_status-file",
+            str(job["status_path"]),
+            "--_log-file",
+            str(job["log_path"]),
+        ]
+    )
+    return command
+
+
+def launch_background_plan(plan: ScanExecutionPlan) -> dict[str, object]:
+    job = create_background_job(prefix="scan", metadata={"entrypoint": "main.py"})
+    command = _build_background_scan_command(plan, job)
+    return launch_background_command(command, job, cwd=Path(__file__).parent)
+
+
+def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
+    available = get_available_subdomain_tools(scanner, tool_status)
+    if not available:
+        console.print("[red]没有可用的子域名工具，请先配置 subfinder 或 oneforall。[/red]")
+        return
+
+    domain = Prompt.ask("\n[bold]请输入目标域名[/bold]").strip()
+    if not domain:
+        console.print("[red]域名不能为空[/red]")
+        return
+
+    plan = build_scan_plan(
+        targets=[domain],
+        available_tools=available,
+        tool_status=tool_status,
+        default_enable_port_scan=bool(tool_status.get("nmap")),
+    )
+    if plan is None:
+        return
+
+    if plan.background:
+        launched = launch_background_plan(plan)
+        console.print(f"\n[green]后台任务已启动: {launched['job_id']}[/green]")
+        console.print(f"[green]PID: {launched['pid']}[/green]")
+        console.print(f"[green]状态文件: {launched['status_path']}[/green]")
+        console.print(f"[green]日志文件: {launched['log_path']}[/green]")
+        return
+
+    saved_path: Path | None = None
+    try:
+        result = scanner.scan(
+            target=plan.targets[0],
+            tools=plan.tools,
+            skip_wildcard=plan.skip_wildcard,
+            skip_validation=plan.skip_validation,
+            parallel=plan.parallel,
+        )
+        show_scan_result(result)
+
+        saved_path = scanner.save_result()
+        console.print(f"\n[green]结果已保存至: {saved_path}[/green]")
+
+        if result.get("wildcard", {}).get("detected"):
+            console.print("\n[yellow]检测到泛解析，跳过端口扫描、Web 指纹和目录扫描。[/yellow]")
+            return
+
+        if not result.get("subdomains") or not plan.enable_port_scan:
+            return
+
+        port_results = run_port_scan(
+            result["subdomains"],
+            mode=plan.port_scan_mode,
+            output_path=saved_path,
+        )
+        if not port_results or not plan.enable_web_fingerprint:
+            return
+
+        fingerprint_result = run_web_fingerprint(
+            result["subdomains"],
+            port_results,
+            output_path=saved_path,
+        )
+        if not fingerprint_result or not fingerprint_result.get("targets"):
+            console.print("[yellow]未识别到可用的 Web 目标，跳过目录扫描。[/yellow]")
+            return
+
+        if not plan.enable_directory_scan:
+            return
+
+        run_directory_scan(
+            fingerprint_result["targets"],
+            output_path=saved_path,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]扫描已取消[/yellow]")
+    except Exception as exc:
+        console.print(f"[red]扫描出错: {exc}[/red]")
+    finally:
+        if saved_path and Path(saved_path).exists():
+            report_path = write_single_scan_report_from_file(saved_path)
+            console.print(f"[dim]摘要已生成: {report_path}[/dim]")
+
+
+def scan_batch_domains(scanner: SubdomainScanner, tool_status: dict[str, bool]):
+    available = get_available_subdomain_tools(scanner, tool_status)
+    if not available:
+        console.print("[red]没有可用的子域名工具，请先配置 subfinder 或 oneforall。[/red]")
+        return
+
+    domains = prompt_targets_from_lines()
+    if not domains:
+        console.print("[red]没有输入域名[/red]")
+        return
+
+    plan = build_scan_plan(
+        targets=domains,
+        available_tools=available,
+        tool_status=tool_status,
+        default_enable_port_scan=False,
+    )
+    if plan is None:
+        return
+
+    if plan.background:
+        launched = launch_background_plan(plan)
+        console.print(f"\n[green]后台任务已启动: {launched['job_id']}[/green]")
+        console.print(f"[green]PID: {launched['pid']}[/green]")
+        console.print(f"[green]状态文件: {launched['status_path']}[/green]")
+        console.print(f"[green]日志文件: {launched['log_path']}[/green]")
+        return
+
+    runner = BatchScanRunner(
+        scanner=scanner,
+        run_port_scan=run_port_scan,
+        run_web_fingerprint=run_web_fingerprint,
+        run_directory_scan=run_directory_scan,
+    )
+    batch_summary, summary_path = runner.run(
+        domains=plan.targets,
+        tools=plan.tools,
+        skip_wildcard=plan.skip_wildcard,
+        skip_validation=plan.skip_validation,
+        parallel=plan.parallel,
+        enable_port_scan=plan.enable_port_scan,
+        port_scan_mode=plan.port_scan_mode,
+        enable_web_fingerprint=plan.enable_web_fingerprint,
+        enable_directory_scan=plan.enable_directory_scan,
+    )
+
+    success = batch_summary["statistics"]["success_count"]
+    console.print(f"\n[bold green]批量扫描完成: {success}/{len(plan.targets)} 成功[/bold green]")
+    runner.print_overview(batch_summary, summary_path)
+    write_batch_item_reports(batch_summary)
+    report_path = write_batch_summary_report(batch_summary, summary_path)
+    console.print(f"[dim]摘要已生成: {report_path}[/dim]")
+    console.print(f"[dim]结果保存在: {config.RESULTS_DIR}[/dim]")
 
 
 def main():

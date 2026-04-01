@@ -19,7 +19,7 @@ class DirectoryScanner:
         self.dirsearch_tool = dirsearch_tool or DirsearchTool()
 
     def scan(self, web_targets: list[dict[str, Any]]) -> dict[str, Any]:
-        targets = self._normalize_targets(web_targets)
+        targets, skipped_unverified_count = self._normalize_targets(web_targets)
         result = {
             "scan_time": datetime.now().isoformat(),
             "statistics": {
@@ -27,6 +27,7 @@ class DirectoryScanner:
                 "completed_count": 0,
                 "error_count": 0,
                 "skipped_unavailable_count": 0,
+                "skipped_unverified_count": skipped_unverified_count,
                 "interesting_path_count": 0,
             },
             "targets": targets,
@@ -80,13 +81,18 @@ class DirectoryScanner:
         return result
 
     @staticmethod
-    def _normalize_targets(web_targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _normalize_targets(web_targets: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
         deduped: dict[tuple[str, str, int], dict[str, Any]] = {}
+        skipped_unverified = 0
         for item in web_targets:
             subdomain = item.get("subdomain")
             scheme = item.get("scheme")
             port = int(item.get("port", 0) or 0)
             url = item.get("url")
+            if item.get("alive_verified") is False:
+                skipped_unverified += 1
+                continue
+
             if not subdomain or not scheme or not url or not port:
                 continue
 
@@ -96,5 +102,6 @@ class DirectoryScanner:
                 "port": port,
                 "scheme": scheme,
                 "url": url,
+                "alive_verified": bool(item.get("alive_verified", True)),
             }
-        return list(deduped.values())
+        return list(deduped.values()), skipped_unverified

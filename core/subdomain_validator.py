@@ -134,6 +134,7 @@ class SubdomainValidator:
             return {
                 'subdomain': subdomain,
                 'ip': sorted(ips),
+                'alive_verified': True,
             }
             
         except dns.resolver.NXDOMAIN:
@@ -148,6 +149,7 @@ class SubdomainValidator:
                     'subdomain': subdomain,
                     'ip': [],
                     'cname': cnames,
+                    'alive_verified': True,
                 }
             except:
                 self._invalid_count += 1

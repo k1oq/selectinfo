@@ -46,6 +46,25 @@ class DirectoryScannerTests(unittest.TestCase):
         self.assertEqual(result["statistics"]["interesting_path_count"], 1)
         self.assertEqual(result["targets"][0]["findings"][0]["path"], "/admin")
 
+    def test_scan_skips_targets_marked_unverified(self):
+        scanner = DirectoryScanner(dirsearch_tool=FakeDirsearchAvailable())
+        result = scanner.scan(
+            [
+                {
+                    "subdomain": "www.example.com",
+                    "ip": "1.1.1.1",
+                    "port": 80,
+                    "scheme": "http",
+                    "url": "http://www.example.com",
+                    "alive_verified": False,
+                }
+            ]
+        )
+
+        self.assertEqual(result["statistics"]["target_count"], 0)
+        self.assertEqual(result["statistics"]["skipped_unverified_count"], 1)
+        self.assertEqual(result["targets"], [])
+
 
 class DirsearchToolTests(unittest.TestCase):
     def setUp(self):

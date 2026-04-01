@@ -25,9 +25,12 @@ class ConfigRuntimeTests(unittest.TestCase):
         oneforall_lines = Path(PROJECT_ROOT, "tools", "oneforall", "requirements.txt").read_text(
             encoding="utf-8"
         ).splitlines()
-        dirsearch_lines = Path(PROJECT_ROOT, "tools", "dirsearch", "requirements.txt").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        dirsearch_requirements = Path(PROJECT_ROOT, "tools", "dirsearch", "requirements.txt")
+        dirsearch_lines = (
+            dirsearch_requirements.read_text(encoding="utf-8").splitlines()
+            if dirsearch_requirements.exists()
+            else []
+        )
 
         root_requirements = {_normalize_requirement_name(line) for line in root_lines}
         root_requirements.discard("")

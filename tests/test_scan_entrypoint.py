@@ -34,6 +34,7 @@ class ScanEntrypointTests(unittest.TestCase):
             results_dir=None,
             output="out.json",
             summary_output=None,
+            background=False,
         )
 
         with mock.patch.object(scan, "resolve_targets", return_value=["a.com", "b.com"]):
@@ -64,6 +65,7 @@ class ScanEntrypointTests(unittest.TestCase):
             results_dir=None,
             output=None,
             summary_output=None,
+            background=False,
         )
 
         with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
@@ -79,6 +81,50 @@ class ScanEntrypointTests(unittest.TestCase):
         self.assertEqual(call_kwargs["tools"], ["subfinder"])
         self.assertTrue(call_kwargs["enable_port_scan"])
         self.assertTrue(call_kwargs["enable_web_fingerprint"])
+
+    def test_execute_rejects_directory_scan_without_validation(self):
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools="subfinder",
+            skip_wildcard=False,
+            skip_validation=True,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=True,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        with self.assertRaises(ValueError):
+            scan.execute(args)
+
+    def test_launch_background_scan_wraps_current_command(self):
+        with mock.patch.object(scan, "create_background_job", return_value={
+            "job_id": "scan_123",
+            "job_dir": Path("runtime/jobs/scan_123"),
+            "status_path": Path("runtime/jobs/scan_123/status.json"),
+            "log_path": Path("runtime/jobs/scan_123/scan.log"),
+            "command_path": Path("runtime/jobs/scan_123/command.txt"),
+        }), mock.patch.object(scan, "launch_background_command", return_value={
+            "job_id": "scan_123",
+            "pid": 4321,
+            "status_path": Path("runtime/jobs/scan_123/status.json"),
+            "log_path": Path("runtime/jobs/scan_123/scan.log"),
+        }) as launch:
+            result = scan.launch_background_scan(["example.com", "--background", "--port-scan"])
+
+        self.assertEqual(result["job_id"], "scan_123")
+        launch.assert_called_once()
+        command = launch.call_args.args[0]
+        self.assertNotIn("--background", command)
+        self.assertIn("--_background-child", command)
+        self.assertIn("example.com", command)
+        self.assertIn("--port-scan", command)
 
     def test_run_single_scan_writes_summary_after_followups(self):
         class FakeScanner:

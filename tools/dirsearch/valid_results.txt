@@ -1,3 +1,0 @@
-# Dirsearch started Fri Jan 30 10:15:22 2026 as: dirsearch.py -l targets.txt -i 200-399 -t 40 --delay 0.8 --random --timeout=10 -o valid_results.txt
-
-200    17B   http://www.diqing.jcy.gov.cn/404.html

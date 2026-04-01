@@ -115,7 +115,10 @@ class SubdomainScanner:
             stats = validator.get_statistics()
             filtered_count = stats["wildcard_filtered"] + stats["invalid_count"]
         else:
-            validated_results = [{"subdomain": subdomain, "ip": []} for subdomain in merged_subdomains]
+            validated_results = [
+                {"subdomain": subdomain, "ip": [], "alive_verified": False}
+                for subdomain in merged_subdomains
+            ]
             filtered_count = 0
 
         end_time = datetime.now()

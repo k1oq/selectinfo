@@ -55,16 +55,7 @@ class Domain(object):
 
         :return: registered domain result
         """
-        use_tld_extract = getattr(settings, 'use_tld_extract', None)
-        if use_tld_extract is False:
-            return self.string
-        try:
-            result = self.extract()
-        except Exception:
-            result = None
-        if result and result.registered_domain:
+        result = self.extract()
+        if result:
             return result.registered_domain
-        matched = self.match()
-        if matched:
-            return matched
-        return self.string or None
+        return None

@@ -110,18 +110,14 @@ class ToolSelfChecker:
                 message=f"未找到 oneforall.py，期望位置: {tool.get_expected_location()}",
             )
 
-        sqlite_probe = self._run_command(
-            self._build_oneforall_sqlite_probe_command(),
-            timeout=15,
-            cwd=str(tool.tool_dir),
-        )
+        sqlite_probe = self._probe_oneforall_sqlite(tool.tool_dir)
         if not sqlite_probe["ok"]:
             return ToolCheckResult(
                 name=tool.name,
                 installed=True,
                 usable=False,
                 path=path,
-                message=f"Python sqlite3 不可用，且 pysqlite3 fallback 未验证通过: {sqlite_probe['message']}",
+                message=sqlite_probe["message"],
             )
 
         backend_info = (sqlite_probe["stdout"] or "").strip() or "unknown"
@@ -207,6 +203,11 @@ class ToolSelfChecker:
         )
 
     @staticmethod
+    def _build_sqlite_probe_command() -> list[str]:
+        script = "import sqlite3; print(f'stdlib:{sqlite3.sqlite_version}')"
+        return [sys.executable, "-c", script]
+
+    @staticmethod
     def _build_oneforall_sqlite_probe_command() -> list[str]:
         script = (
             "from sqlite_compat import ensure_sqlite3; "
@@ -215,6 +216,39 @@ class ToolSelfChecker:
             "print(f'{backend}:{sqlite3.sqlite_version}')"
         )
         return [sys.executable, "-c", script]
+
+    @classmethod
+    def _probe_oneforall_sqlite(cls, tool_dir: Path) -> dict:
+        builtin_probe = cls._run_command(
+            cls._build_sqlite_probe_command(),
+            timeout=15,
+            cwd=str(tool_dir),
+        )
+        if builtin_probe["ok"]:
+            return builtin_probe
+
+        compat_file = tool_dir / "sqlite_compat.py"
+        if compat_file.exists():
+            fallback_probe = cls._run_command(
+                cls._build_oneforall_sqlite_probe_command(),
+                timeout=15,
+                cwd=str(tool_dir),
+            )
+            if fallback_probe["ok"]:
+                return fallback_probe
+            return {
+                "ok": False,
+                "stdout": fallback_probe.get("stdout", ""),
+                "stderr": fallback_probe.get("stderr", ""),
+                "message": f"Python sqlite3 不可用，且 pysqlite3 fallback 未验证通过: {fallback_probe['message']}",
+            }
+
+        return {
+            "ok": False,
+            "stdout": builtin_probe.get("stdout", ""),
+            "stderr": builtin_probe.get("stderr", ""),
+            "message": f"Python sqlite3 不可用: {builtin_probe['message']}",
+        }
 
     @staticmethod
     def _run_command(

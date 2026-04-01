@@ -110,17 +110,23 @@ class WebFingerprintScanner:
         ]
         return sorted(batches, key=lambda batch: (batch.ports, tuple(batch.ips)))
 
-    def _build_subdomain_index(self, subdomains: list[dict[str, Any]]) -> dict[str, list[str]]:
-        subdomain_index: dict[str, list[str]] = {}
+    def _build_subdomain_index(self, subdomains: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+        subdomain_index: dict[str, list[dict[str, Any]]] = {}
         for item in subdomains:
             subdomain = item.get("subdomain")
             ips = item.get("ip", [])
+            alive_verified = bool(item.get("alive_verified", False))
             if not subdomain:
                 continue
             for ip in ips:
                 subdomain_index.setdefault(ip, [])
-                if subdomain not in subdomain_index[ip]:
-                    subdomain_index[ip].append(subdomain)
+                if all(entry.get("subdomain") != subdomain for entry in subdomain_index[ip]):
+                    subdomain_index[ip].append(
+                        {
+                            "subdomain": subdomain,
+                            "alive_verified": alive_verified,
+                        }
+                    )
         return subdomain_index
 
     def _fingerprint_ip(self, candidate: PortFingerprintCandidate) -> tuple[bool, str]:
@@ -212,12 +218,15 @@ class WebFingerprintScanner:
 
     def _map_web_targets(
         self,
-        subdomain_index: dict[str, list[str]],
+        subdomain_index: dict[str, list[dict[str, Any]]],
         ip_port_web_map: dict[tuple[str, int], dict[str, Any]],
     ) -> list[dict[str, Any]]:
         deduped_targets: dict[tuple[str, str, int], dict[str, Any]] = {}
         for (ip, port), nmap_info in ip_port_web_map.items():
-            for subdomain in subdomain_index.get(ip, []):
+            for subdomain_item in subdomain_index.get(ip, []):
+                subdomain = str(subdomain_item.get("subdomain") or "")
+                if not subdomain:
+                    continue
                 scheme = self._determine_scheme(nmap_info)
                 url = self._build_url(subdomain, scheme, port)
                 key = (scheme, subdomain, port)
@@ -227,6 +236,7 @@ class WebFingerprintScanner:
                     "port": port,
                     "scheme": scheme,
                     "url": url,
+                    "alive_verified": bool(subdomain_item.get("alive_verified", False)),
                     "fingerprint_status": "identified",
                     "nmap": dict(nmap_info),
                 }

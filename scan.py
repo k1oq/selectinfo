@@ -6,9 +6,12 @@ Non-interactive scan entrypoint for human users.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from rich.table import Table
 
@@ -25,21 +28,26 @@ from core import (
     write_batch_summary_report,
     write_single_scan_report_from_file,
 )
+from utils.background_jobs import (
+    create_background_job,
+    launch_background_command,
+    update_background_job,
+)
 from utils.logger import console
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="SelectInfo 非交互扫描入口，适合直接跑单个域名或批量文件。"
+        description="SelectInfo 非交互扫描入口，适合直接运行单域名或批量任务。",
     )
     parser.add_argument("target", nargs="?", help="单个目标域名")
     parser.add_argument("--targets-file", help="批量目标文件，每行一个域名")
     parser.add_argument(
         "--tools",
-        help="指定子域名工具，逗号分隔，例如 subfinder,oneforall。默认自动使用可用工具。",
+        help="指定子域名工具，逗号分隔，例如 subfinder,oneforall；默认自动选择可用工具。",
     )
     parser.add_argument("--skip-wildcard", action="store_true", help="跳过泛解析检测")
-    parser.add_argument("--skip-validation", action="store_true", help="跳过 DNS 验证")
+    parser.add_argument("--skip-validation", action="store_true", help="跳过 DNS 存活验证")
     parser.add_argument("--serial", action="store_true", help="串行运行子域名工具")
 
     parser.add_argument("--port-scan", action="store_true", help="启用端口扫描")
@@ -55,15 +63,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--results-dir", help="覆盖默认 results 目录")
     parser.add_argument("--output", help="单目标模式下显式指定 JSON 结果路径")
     parser.add_argument("--summary-output", help="显式指定 CSV 摘要路径")
+    parser.add_argument("--background", action="store_true", help="后台运行，并将日志写入 runtime/jobs")
+
+    parser.add_argument("--_background-child", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--_job-id", help=argparse.SUPPRESS)
+    parser.add_argument("--_status-file", help=argparse.SUPPRESS)
+    parser.add_argument("--_log-file", help=argparse.SUPPRESS)
     return parser
 
 
 def parse_requested_tools(raw: str | None) -> list[str] | None:
     if raw is None:
         return None
+
     tools = [token.strip().lower() for token in raw.split(",") if token.strip()]
     if not tools:
         return None
+
     deduped: list[str] = []
     for tool_name in tools:
         if tool_name not in deduped:
@@ -75,7 +91,7 @@ def resolve_targets(target: str | None, targets_file: str | None) -> list[str]:
     if target and targets_file:
         raise ValueError("不能同时指定单个 target 和 --targets-file。")
     if not target and not targets_file:
-        raise ValueError("请提供一个目标域名，或使用 --targets-file。")
+        raise ValueError("请提供目标域名，或使用 --targets-file。")
 
     if targets_file:
         path = Path(targets_file)
@@ -100,9 +116,7 @@ def resolve_stage_flags(
 
 def select_tools(scanner: SubdomainScanner, requested_tools: list[str] | None) -> tuple[list[str], dict[str, bool]]:
     tool_status = scanner.check_tools()
-    available_tools = [
-        name for name in scanner.AVAILABLE_TOOLS if tool_status.get(name)
-    ]
+    available_tools = [name for name in scanner.AVAILABLE_TOOLS if tool_status.get(name)]
 
     if requested_tools is None:
         if not available_tools:
@@ -132,7 +146,7 @@ def validate_followup_tools(
     enable_directory_scan: bool,
 ):
     if (enable_port_scan or enable_web_fingerprint) and not tool_status.get("nmap"):
-        raise ValueError("当前 nmap 不可用，无法执行端口扫描或 Web 指纹。请先运行 `python tools/self_check.py`。")
+        raise ValueError("当前 nmap 不可用，无法执行端口扫描或 Web 指纹识别。请先运行 `python tools/self_check.py`。")
     if enable_directory_scan and not tool_status.get("dirsearch"):
         console.print("[yellow]dirsearch 当前不可用，目录扫描阶段会被自动跳过。[/yellow]")
 
@@ -148,6 +162,7 @@ def print_plan(
     port_mode: str,
     enable_web_fingerprint: bool,
     enable_directory_scan: bool,
+    background: bool = False,
 ):
     table = Table(title="执行计划", show_header=False)
     table.add_column("项目", style="cyan")
@@ -163,16 +178,57 @@ def print_plan(
     table.add_row("目标", target_summary)
     table.add_row("子域名工具", ", ".join(tools))
     table.add_row("泛解析检测", "否" if skip_wildcard else "是")
-    table.add_row("DNS 验证", "否" if skip_validation else "是")
+    table.add_row("DNS 存活验证", "否" if skip_validation else "是")
     table.add_row("工具并行", "是" if parallel else "否")
     table.add_row("端口扫描", "是" if enable_port_scan else "否")
     if enable_port_scan:
         table.add_row("端口预设", config.PORT_PRESETS[port_mode]["name"])
     table.add_row("Web 指纹", "是" if enable_web_fingerprint else "否")
     table.add_row("目录扫描", "是" if enable_directory_scan else "否")
+    table.add_row("后台运行", "是" if background else "否")
     console.print()
     console.print(table)
     console.print()
+
+
+def background_status_context(args: argparse.Namespace) -> dict[str, str]:
+    return {
+        "job_id": str(getattr(args, "_job_id", "") or "").strip(),
+        "status_file": str(getattr(args, "_status_file", "") or "").strip(),
+        "log_file": str(getattr(args, "_log_file", "") or "").strip(),
+    }
+
+
+def update_background_scan_status(args: argparse.Namespace, **fields: Any):
+    context = background_status_context(args)
+    if not context["status_file"]:
+        return
+
+    payload = dict(fields)
+    if context["job_id"]:
+        payload.setdefault("job_id", context["job_id"])
+    if context["log_file"]:
+        payload.setdefault("log_path", context["log_file"])
+    update_background_job(context["status_file"], **payload)
+
+
+def launch_background_scan(argv: list[str]) -> dict[str, Any]:
+    job = create_background_job(prefix="scan", metadata={"entrypoint": "scan.py"})
+    child_argv = [arg for arg in argv if arg != "--background"]
+    child_argv.extend(
+        [
+            "--_background-child",
+            "--_job-id",
+            str(job["job_id"]),
+            "--_status-file",
+            str(job["status_path"]),
+            "--_log-file",
+            str(job["log_path"]),
+        ]
+    )
+
+    command = [sys.executable, str(Path(__file__).resolve()), *child_argv]
+    return launch_background_command(command, job, cwd=Path(__file__).parent)
 
 
 @contextmanager
@@ -204,7 +260,7 @@ def run_single_scan(
     enable_directory_scan: bool,
     output_path: str | None = None,
     summary_output: str | None = None,
-) -> dict:
+) -> dict[str, Path]:
     result = scanner.scan(
         target=target,
         tools=tools,
@@ -227,20 +283,13 @@ def run_single_scan(
                 port_results,
                 output_path=saved_path,
             )
-            if (
-                fingerprint_result
-                and fingerprint_result.get("targets")
-                and enable_directory_scan
-            ):
+            if fingerprint_result and fingerprint_result.get("targets") and enable_directory_scan:
                 run_directory_scan(
                     fingerprint_result["targets"],
                     output_path=saved_path,
                 )
 
-    report_path = write_single_scan_report_from_file(
-        saved_path,
-        output_path=summary_output,
-    )
+    report_path = write_single_scan_report_from_file(saved_path, output_path=summary_output)
     return {
         "saved_path": Path(saved_path),
         "report_path": Path(report_path),
@@ -260,7 +309,7 @@ def run_batch_scan(
     enable_web_fingerprint: bool,
     enable_directory_scan: bool,
     summary_output: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     runner = BatchScanRunner(
         scanner=scanner,
         run_port_scan=run_port_scan,
@@ -292,7 +341,7 @@ def run_batch_scan(
     }
 
 
-def execute(args: argparse.Namespace) -> dict:
+def execute(args: argparse.Namespace) -> dict[str, Any]:
     targets = resolve_targets(args.target, args.targets_file)
     if len(targets) > 1 and args.output:
         raise ValueError("--output 仅支持单目标模式，请在批量模式下使用 --results-dir。")
@@ -303,6 +352,8 @@ def execute(args: argparse.Namespace) -> dict:
         args.web_fingerprint,
         args.directory_scan,
     )
+    if args.skip_validation and enable_directory_scan:
+        raise ValueError("目录扫描依赖存活验证，不能与 --skip-validation 同时使用。")
 
     scanner = SubdomainScanner()
     tools, tool_status = select_tools(scanner, requested_tools)
@@ -323,6 +374,7 @@ def execute(args: argparse.Namespace) -> dict:
         port_mode=args.port_mode,
         enable_web_fingerprint=enable_web_fingerprint,
         enable_directory_scan=enable_directory_scan,
+        background=bool(getattr(args, "background", False) or getattr(args, "_background_child", False)),
     )
 
     with overridden_results_dir(args.results_dir):
@@ -358,26 +410,78 @@ def execute(args: argparse.Namespace) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(argv) if argv is not None else list(sys.argv[1:])
     parser = build_parser()
     parsed = parser.parse_args(argv)
+
+    if parsed.background and not parsed._background_child:
+        try:
+            launched = launch_background_scan(argv)
+        except Exception as exc:
+            console.print(f"[red]后台扫描启动失败: {exc}[/red]")
+            return 1
+
+        console.print(f"[green]后台任务已启动: {launched['job_id']}[/green]")
+        console.print(f"[green]PID: {launched['pid']}[/green]")
+        console.print(f"[green]状态文件: {launched['status_path']}[/green]")
+        console.print(f"[green]日志文件: {launched['log_path']}[/green]")
+        return 0
+
+    if parsed._background_child:
+        update_background_scan_status(
+            parsed,
+            status="running",
+            pid=os.getpid(),
+            child_started_at=datetime.now().isoformat(),
+        )
 
     try:
         result = execute(parsed)
     except KeyboardInterrupt:
+        update_background_scan_status(
+            parsed,
+            status="cancelled",
+            finished_at=datetime.now().isoformat(),
+            exit_code=1,
+        )
         console.print("\n[yellow]扫描已取消[/yellow]")
         return 1
     except Exception as exc:
+        update_background_scan_status(
+            parsed,
+            status="failed",
+            finished_at=datetime.now().isoformat(),
+            exit_code=1,
+            error=str(exc),
+        )
         console.print(f"[red]扫描启动失败: {exc}[/red]")
         return 1
+
+    if "saved_path" in result:
+        status_result = {
+            "saved_path": str(result["saved_path"]),
+            "report_path": str(result["report_path"]),
+        }
+    else:
+        status_result = {
+            "summary_path": str(result["summary_path"]),
+            "report_path": str(result["report_path"]),
+        }
+
+    update_background_scan_status(
+        parsed,
+        status="completed",
+        finished_at=datetime.now().isoformat(),
+        exit_code=0,
+        result=status_result,
+    )
 
     if "saved_path" in result:
         console.print(f"[green]结果文件: {result['saved_path']}[/green]")
         console.print(f"[green]摘要文件: {result['report_path']}[/green]")
     else:
         stats = result["batch_summary"]["statistics"]
-        console.print(
-            f"[green]批量扫描完成: {stats['success_count']}/{stats['total_domains']} 成功[/green]"
-        )
+        console.print(f"[green]批量扫描完成: {stats['success_count']}/{stats['total_domains']} 成功[/green]")
         console.print(f"[green]汇总文件: {result['summary_path']}[/green]")
         console.print(f"[green]摘要文件: {result['report_path']}[/green]")
     return 0

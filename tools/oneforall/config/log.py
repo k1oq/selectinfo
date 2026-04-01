@@ -23,16 +23,16 @@ logfile_fmt = '<light-green>{time:YYYY-MM-DD HH:mm:ss,SSS}</light-green> ' \
               '<blue>{line}</blue> - <level>{message}</level>'
 
 logger.remove()
-logger.level(name='TRACE', color='<cyan><bold>')
-logger.level(name='DEBUG', color='<blue><bold>')
-logger.level(name='INFOR', no=20, color='<green><bold>')
-logger.level(name='QUITE', no=25, color='<green><bold>')
-logger.level(name='ALERT', no=30, color='<yellow><bold>')
-logger.level(name='ERROR', color='<red><bold>')
-logger.level(name='FATAL', no=50, color='<RED><bold>')
+logger.level(name='TRACE', color='<cyan><bold>', icon='✏️')
+logger.level(name='DEBUG', color='<blue><bold>', icon='🐞 ')
+logger.level(name='INFOR', no=20, color='<green><bold>', icon='ℹ️')
+logger.level(name='QUITE', no=25, color='<green><bold>', icon='🤫 ')
+logger.level(name='ALERT', no=30, color='<yellow><bold>', icon='⚠️')
+logger.level(name='ERROR', color='<red><bold>', icon='❌️')
+logger.level(name='FATAL', no=50, color='<RED><bold>', icon='☠️')
 
 # 如果你想在命令终端静默运行OneForAll，可以将以下一行中的level设置为QUITE
 # 命令终端日志级别默认为INFOR
-logger.add(sys.stderr, level='INFOR', format=stdout_fmt, enqueue=False)
+logger.add(sys.stderr, level='INFOR', format=stdout_fmt, enqueue=True)
 # 日志文件默认为级别为DEBUG
-logger.add(log_path, level='DEBUG', format=logfile_fmt, enqueue=False, encoding='utf-8')
+logger.add(log_path, level='DEBUG', format=logfile_fmt, enqueue=True, encoding='utf-8')
