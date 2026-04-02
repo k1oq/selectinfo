@@ -20,6 +20,16 @@ def _normalize_requirement_name(line: str) -> str:
 
 
 class ConfigRuntimeTests(unittest.TestCase):
+    def test_override_tool_settings_is_temporary(self):
+        original_settings = config.load_local_settings()
+        original_nmap_args = config.get_tool_settings("nmap")["args"]
+
+        with config.override_tool_settings({"nmap": {"args": ["-sV", "-Pn"]}}):
+            self.assertEqual(config.get_tool_settings("nmap")["args"], ["-sV", "-Pn"])
+
+        self.assertEqual(config.get_tool_settings("nmap")["args"], original_nmap_args)
+        self.assertEqual(config.load_local_settings(), original_settings)
+
     def test_root_requirements_cover_bundled_tool_requirements(self):
         root_lines = Path(PROJECT_ROOT, "requirements.txt").read_text(encoding="utf-8").splitlines()
         oneforall_lines = Path(PROJECT_ROOT, "tools", "oneforall", "requirements.txt").read_text(

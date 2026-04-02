@@ -33,6 +33,9 @@ from utils.background_jobs import (
     launch_background_command,
     update_background_job,
 )
+from tools.arg_validation import build_tool_settings_override
+from tools.dirsearch_wrapper import DirsearchTool
+from tools.setup_manager import NmapSetupManager
 from utils.logger import console
 
 
@@ -46,11 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--tools",
         help="指定子域名工具，逗号分隔，例如 subfinder,oneforall；默认自动选择可用工具。",
     )
+    parser.add_argument("--subfinder-args", help="本次运行临时覆盖 Subfinder 参数字符串")
+    parser.add_argument("--oneforall-args", help="本次运行临时覆盖 OneForAll 参数字符串")
     parser.add_argument("--skip-wildcard", action="store_true", help="跳过泛解析检测")
     parser.add_argument("--skip-validation", action="store_true", help="跳过 DNS 存活验证")
     parser.add_argument("--serial", action="store_true", help="串行运行子域名工具")
 
     parser.add_argument("--port-scan", action="store_true", help="启用端口扫描")
+    parser.add_argument("--nmap-args", help="本次运行临时覆盖端口扫描阶段的 nmap 参数字符串")
     parser.add_argument(
         "--port-mode",
         choices=sorted(config.PORT_PRESETS),
@@ -59,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--web-fingerprint", action="store_true", help="启用 Web 指纹识别")
     parser.add_argument("--directory-scan", action="store_true", help="启用 Web 目录扫描")
+    parser.add_argument("--dirsearch-args", help="本次运行临时覆盖 dirsearch 参数字符串")
 
     parser.add_argument("--results-dir", help="覆盖默认 results 目录")
     parser.add_argument("--output", help="单目标模式下显式指定 JSON 结果路径")
@@ -85,6 +92,47 @@ def parse_requested_tools(raw: str | None) -> list[str] | None:
         if tool_name not in deduped:
             deduped.append(tool_name)
     return deduped
+
+
+def parse_cli_tool_overrides(args: argparse.Namespace) -> tuple[dict[str, str], dict[str, dict[str, list[str]]]]:
+    raw_overrides: dict[str, str] = {}
+    runtime_overrides: dict[str, dict[str, list[str]]] = {}
+    option_fields = {
+        "subfinder": "subfinder_args",
+        "oneforall": "oneforall_args",
+        "nmap": "nmap_args",
+        "dirsearch": "dirsearch_args",
+    }
+
+    for tool_name, field_name in option_fields.items():
+        raw_value = str(getattr(args, field_name, "") or "").strip()
+        if not raw_value:
+            continue
+
+        parsed_args = config.parse_cli_args(raw_value)
+        if not parsed_args:
+            continue
+
+        raw_overrides[tool_name] = raw_value
+        runtime_overrides[tool_name] = build_tool_settings_override(tool_name, parsed_args)
+
+    return raw_overrides, runtime_overrides
+
+
+def merge_cli_requested_tools(
+    requested_tools: list[str] | None,
+    cli_tool_overrides: dict[str, str],
+    available_tool_names: list[str] | tuple[str, ...],
+) -> list[str] | None:
+    implied_tools = [name for name in available_tool_names if name in cli_tool_overrides]
+    if requested_tools is None:
+        return implied_tools or None
+
+    merged = list(requested_tools)
+    for tool_name in implied_tools:
+        if tool_name not in merged:
+            merged.append(tool_name)
+    return merged
 
 
 def resolve_targets(target: str | None, targets_file: str | None) -> list[str]:
@@ -139,15 +187,16 @@ def select_tools(scanner: SubdomainScanner, requested_tools: list[str] | None) -
 
 
 def validate_followup_tools(
-    tool_status: dict[str, bool],
+    _tool_status: dict[str, bool],
     *,
     enable_port_scan: bool,
     enable_web_fingerprint: bool,
     enable_directory_scan: bool,
 ):
-    if (enable_port_scan or enable_web_fingerprint) and not tool_status.get("nmap"):
+    # `select_tools()` 只返回子域名工具状态；后续阶段工具需在这里独立检测。
+    if (enable_port_scan or enable_web_fingerprint) and not NmapSetupManager.is_available():
         raise ValueError("当前 nmap 不可用，无法执行端口扫描或 Web 指纹识别。请先运行 `python tools/self_check.py`。")
-    if enable_directory_scan and not tool_status.get("dirsearch"):
+    if enable_directory_scan and not DirsearchTool().check_json_support().get("usable"):
         console.print("[yellow]dirsearch 当前不可用，目录扫描阶段会被自动跳过。[/yellow]")
 
 
@@ -162,6 +211,7 @@ def print_plan(
     port_mode: str,
     enable_web_fingerprint: bool,
     enable_directory_scan: bool,
+    tool_arg_overrides: dict[str, str] | None = None,
     background: bool = False,
 ):
     table = Table(title="执行计划", show_header=False)
@@ -177,6 +227,14 @@ def print_plan(
 
     table.add_row("目标", target_summary)
     table.add_row("子域名工具", ", ".join(tools))
+    if tool_arg_overrides:
+        ordered_names = ("subfinder", "oneforall", "nmap", "dirsearch")
+        display = " ; ".join(
+            f"{name}: {tool_arg_overrides[name]}"
+            for name in ordered_names
+            if name in tool_arg_overrides
+        )
+        table.add_row("临时参数覆盖", display)
     table.add_row("泛解析检测", "否" if skip_wildcard else "是")
     table.add_row("DNS 存活验证", "否" if skip_validation else "是")
     table.add_row("工具并行", "是" if parallel else "否")
@@ -346,42 +404,65 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
     if len(targets) > 1 and args.output:
         raise ValueError("--output 仅支持单目标模式，请在批量模式下使用 --results-dir。")
 
+    cli_tool_arg_overrides, runtime_tool_overrides = parse_cli_tool_overrides(args)
     requested_tools = parse_requested_tools(args.tools)
     enable_port_scan, enable_web_fingerprint, enable_directory_scan = resolve_stage_flags(
-        args.port_scan,
+        args.port_scan or ("nmap" in cli_tool_arg_overrides),
         args.web_fingerprint,
-        args.directory_scan,
+        args.directory_scan or ("dirsearch" in cli_tool_arg_overrides),
     )
     if args.skip_validation and enable_directory_scan:
         raise ValueError("目录扫描依赖存活验证，不能与 --skip-validation 同时使用。")
 
-    scanner = SubdomainScanner()
-    tools, tool_status = select_tools(scanner, requested_tools)
-    validate_followup_tools(
-        tool_status,
-        enable_port_scan=enable_port_scan,
-        enable_web_fingerprint=enable_web_fingerprint,
-        enable_directory_scan=enable_directory_scan,
-    )
+    with config.override_tool_settings(runtime_tool_overrides):
+        scanner = SubdomainScanner()
+        requested_tools = merge_cli_requested_tools(
+            requested_tools,
+            cli_tool_arg_overrides,
+            tuple(scanner.AVAILABLE_TOOLS),
+        )
+        tools, tool_status = select_tools(scanner, requested_tools)
+        validate_followup_tools(
+            tool_status,
+            enable_port_scan=enable_port_scan,
+            enable_web_fingerprint=enable_web_fingerprint,
+            enable_directory_scan=enable_directory_scan,
+        )
 
-    print_plan(
-        targets,
-        tools,
-        skip_wildcard=args.skip_wildcard,
-        skip_validation=args.skip_validation,
-        parallel=not args.serial,
-        enable_port_scan=enable_port_scan,
-        port_mode=args.port_mode,
-        enable_web_fingerprint=enable_web_fingerprint,
-        enable_directory_scan=enable_directory_scan,
-        background=bool(getattr(args, "background", False) or getattr(args, "_background_child", False)),
-    )
+        print_plan(
+            targets,
+            tools,
+            skip_wildcard=args.skip_wildcard,
+            skip_validation=args.skip_validation,
+            parallel=not args.serial,
+            enable_port_scan=enable_port_scan,
+            port_mode=args.port_mode,
+            enable_web_fingerprint=enable_web_fingerprint,
+            enable_directory_scan=enable_directory_scan,
+            tool_arg_overrides=cli_tool_arg_overrides,
+            background=bool(getattr(args, "background", False) or getattr(args, "_background_child", False)),
+        )
 
-    with overridden_results_dir(args.results_dir):
-        if len(targets) == 1:
-            return run_single_scan(
+        with overridden_results_dir(args.results_dir):
+            if len(targets) == 1:
+                return run_single_scan(
+                    scanner,
+                    target=targets[0],
+                    tools=tools,
+                    skip_wildcard=args.skip_wildcard,
+                    skip_validation=args.skip_validation,
+                    parallel=not args.serial,
+                    enable_port_scan=enable_port_scan,
+                    port_mode=args.port_mode,
+                    enable_web_fingerprint=enable_web_fingerprint,
+                    enable_directory_scan=enable_directory_scan,
+                    output_path=args.output,
+                    summary_output=args.summary_output,
+                )
+
+            return run_batch_scan(
                 scanner,
-                target=targets[0],
+                targets=targets,
                 tools=tools,
                 skip_wildcard=args.skip_wildcard,
                 skip_validation=args.skip_validation,
@@ -390,23 +471,8 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
                 port_mode=args.port_mode,
                 enable_web_fingerprint=enable_web_fingerprint,
                 enable_directory_scan=enable_directory_scan,
-                output_path=args.output,
                 summary_output=args.summary_output,
             )
-
-        return run_batch_scan(
-            scanner,
-            targets=targets,
-            tools=tools,
-            skip_wildcard=args.skip_wildcard,
-            skip_validation=args.skip_validation,
-            parallel=not args.serial,
-            enable_port_scan=enable_port_scan,
-            port_mode=args.port_mode,
-            enable_web_fingerprint=enable_web_fingerprint,
-            enable_directory_scan=enable_directory_scan,
-            summary_output=args.summary_output,
-        )
 
 
 def main(argv: list[str] | None = None) -> int:

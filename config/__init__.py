@@ -9,6 +9,8 @@ import json
 import os
 import shlex
 import sys
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -142,6 +144,9 @@ DEFAULT_TOOL_SETTINGS = {
     },
 }
 
+_RUNTIME_TOOL_SETTINGS_STACK: list[dict[str, dict]] = []
+_RUNTIME_TOOL_SETTINGS_LOCK = threading.RLock()
+
 
 def load_ports(preset: str = "common") -> list[int]:
     """Load port presets from the config directory."""
@@ -206,6 +211,13 @@ def get_tool_settings(tool_name: str) -> dict:
     result = copy.deepcopy(defaults)
     for key, value in overrides.items():
         result[key] = value
+
+    with _RUNTIME_TOOL_SETTINGS_LOCK:
+        runtime_layers = list(_RUNTIME_TOOL_SETTINGS_STACK)
+    for layer in runtime_layers:
+        runtime_overrides = layer.get(tool_name, {})
+        for key, value in runtime_overrides.items():
+            result[key] = copy.deepcopy(value)
     return result
 
 
@@ -231,6 +243,31 @@ def reset_tool_settings(tool_name: str):
 def get_all_tool_settings() -> dict:
     """Return effective settings for every supported tool."""
     return {name: get_tool_settings(name) for name in DEFAULT_TOOL_SETTINGS}
+
+
+@contextmanager
+def override_tool_settings(overrides: dict[str, dict] | None):
+    """Temporarily apply in-process tool setting overrides."""
+    normalized = {
+        tool_name: copy.deepcopy(values)
+        for tool_name, values in (overrides or {}).items()
+        if values
+    }
+    if not normalized:
+        yield
+        return
+
+    with _RUNTIME_TOOL_SETTINGS_LOCK:
+        _RUNTIME_TOOL_SETTINGS_STACK.append(normalized)
+
+    try:
+        yield
+    finally:
+        with _RUNTIME_TOOL_SETTINGS_LOCK:
+            for index in range(len(_RUNTIME_TOOL_SETTINGS_STACK) - 1, -1, -1):
+                if _RUNTIME_TOOL_SETTINGS_STACK[index] is normalized:
+                    del _RUNTIME_TOOL_SETTINGS_STACK[index]
+                    break
 
 
 def get_subfinder_runtime_env() -> dict[str, str]:

@@ -45,6 +45,7 @@ python -m pip install -r requirements.txt
 
 ```bash
 python scan.py example.com --port-scan --web-fingerprint
+python scan.py example.com --tools subfinder --nmap-args "-sV -Pn"
 python main.py
 ```
 
@@ -155,6 +156,7 @@ chmod +x tools/subfinder/subfinder
 支持三种入口：
 
 - `python scan.py <domain>`
+- `python scan.py <domain> --nmap-args "-sV -Pn"`（仅本次运行生效，不会修改本地配置）
   - 闈炰氦浜掑紡鎵弿锛岄€傚悎浜虹被鐢ㄦ埛鐩存帴鎵ц鍗曠洰鏍囨垨鎵归噺浠诲姟
 - `python main.py`
   - 交互式扫描和工具配置
@@ -169,6 +171,7 @@ chmod +x tools/subfinder/subfinder
 python scan.py example.com --port-scan --web-fingerprint
 python scan.py --targets-file domains.txt --port-scan --web-fingerprint --directory-scan
 python scan.py example.com --tools subfinder --output results/example.json
+python scan.py example.com --tools oneforall --subfinder-args "-rl 50" --nmap-args "-sV -Pn"
 python tools/self_check.py
 # edit config/local_settings.json
 ```

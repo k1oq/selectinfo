@@ -5,27 +5,21 @@ Unified tool configuration API shared by MCP and interactive menus.
 from __future__ import annotations
 
 import json
-import shlex
-import sys
 from pathlib import Path
 from typing import Any
 
 import config
 from utils import atomic_write_json
+from .arg_validation import (
+    SUPPORTED_TOOLS,
+    build_tool_settings_override,
+    validate_tool_arg_tokens,
+)
 from .dirsearch_wrapper import DirsearchTool
 from .oneforall_wrapper import OneForAllTool
 from .self_check import ToolSelfChecker
 from .setup_manager import NmapSetupManager
 from .subfinder_wrapper import SubfinderTool
-
-
-SUPPORTED_TOOLS = ("subfinder", "oneforall", "nmap", "dirsearch")
-RESERVED_ARG_TOKENS = {
-    "subfinder": {"-d", "-domain", "-silent", "-all", "-config", "-pc"},
-    "oneforall": {"--target", "--alive", "--brute", "--fmt", "run"},
-    "nmap": set(),
-    "dirsearch": set(),
-}
 
 
 class ToolConfigAPI:
@@ -87,12 +81,8 @@ class ToolConfigAPI:
     def set_tool_arg_string(self, tool_name: str, arg_string: str) -> dict[str, Any]:
         self._validate_tool(tool_name)
         parsed_args = self.parse_arg_string(arg_string)
-        self._validate_reserved_args(tool_name, parsed_args)
-
-        if tool_name == "nmap":
-            updated = {"args": parsed_args}
-        else:
-            updated = {"extra_args": parsed_args}
+        validate_tool_arg_tokens(tool_name, parsed_args)
+        updated = build_tool_settings_override(tool_name, parsed_args)
 
         result = self.update_tool_settings(tool_name, updated)
         result["arg_string"] = arg_string
@@ -184,19 +174,7 @@ class ToolConfigAPI:
 
     @staticmethod
     def parse_arg_string(arg_string: str) -> list[str]:
-        text = str(arg_string or "").strip()
-        if not text:
-            return []
-        return shlex.split(text, posix=not sys.platform.startswith("win"))
-
-    @staticmethod
-    def _validate_reserved_args(tool_name: str, parsed_args: list[str]):
-        reserved = RESERVED_ARG_TOKENS.get(tool_name, set())
-        conflicts = [token for token in parsed_args if token in reserved]
-        if conflicts:
-            raise ValueError(
-                f"{tool_name} 参数中包含受包装器管理的保留参数: {', '.join(conflicts)}"
-            )
+        return config.parse_cli_args(arg_string)
 
     @staticmethod
     def _sanitize_settings(tool_name: str, values: dict[str, Any]) -> dict[str, Any]:

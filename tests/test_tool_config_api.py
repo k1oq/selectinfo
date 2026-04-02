@@ -45,9 +45,19 @@ class ToolConfigAPITests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api.set_tool_arg_string("oneforall", "--fmt json")
 
+        with self.assertRaises(ValueError):
+            self.api.set_tool_arg_string("oneforall", "--path out.json")
+
     def test_reserved_subfinder_args_are_rejected(self):
         with self.assertRaises(ValueError):
             self.api.set_tool_arg_string("subfinder", "-d example.com")
+
+    def test_reserved_nmap_args_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self.api.set_tool_arg_string("nmap", "-p 80")
+
+        with self.assertRaises(ValueError):
+            self.api.set_tool_arg_string("nmap", "-oG -")
 
     def test_set_dirsearch_arg_string_updates_extra_args(self):
         result = self.api.set_tool_arg_string("dirsearch", "--exclude-status 404")
@@ -56,6 +66,10 @@ class ToolConfigAPITests(unittest.TestCase):
             result["effective_settings"]["extra_args"],
             ["--exclude-status", "404"],
         )
+
+    def test_reserved_dirsearch_args_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self.api.set_tool_arg_string("dirsearch", "-u https://example.com")
 
 
 if __name__ == "__main__":

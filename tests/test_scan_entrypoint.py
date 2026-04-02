@@ -5,10 +5,38 @@ from pathlib import Path
 from unittest import mock
 
 from _bootstrap import PROJECT_ROOT  # noqa: F401
+import config
 import scan
 
 
 class ScanEntrypointTests(unittest.TestCase):
+    def test_parse_cli_tool_overrides_parses_and_ignores_blank_values(self):
+        args = Namespace(
+            subfinder_args="",
+            oneforall_args="   ",
+            nmap_args='-sV -Pn --script "banner"',
+            dirsearch_args=None,
+        )
+
+        raw_overrides, runtime_overrides = scan.parse_cli_tool_overrides(args)
+
+        self.assertEqual(raw_overrides, {"nmap": '-sV -Pn --script "banner"'})
+        self.assertEqual(
+            runtime_overrides,
+            {"nmap": {"args": config.parse_cli_args('-sV -Pn --script "banner"')}},
+        )
+
+    def test_parse_cli_tool_overrides_rejects_reserved_tokens(self):
+        args = Namespace(
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args="-p 80",
+            dirsearch_args=None,
+        )
+
+        with self.assertRaises(ValueError):
+            scan.parse_cli_tool_overrides(args)
+
     def test_resolve_stage_flags_auto_enables_dependencies(self):
         self.assertEqual(
             scan.resolve_stage_flags(False, False, True),
@@ -47,8 +75,6 @@ class ScanEntrypointTests(unittest.TestCase):
         fake_scanner.check_tools.return_value = {
             "subfinder": True,
             "oneforall": False,
-            "nmap": True,
-            "dirsearch": True,
         }
 
         args = Namespace(
@@ -71,6 +97,8 @@ class ScanEntrypointTests(unittest.TestCase):
         with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
             scan, "print_plan"
         ), mock.patch.object(
+            scan.NmapSetupManager, "is_available", return_value=True
+        ), mock.patch.object(
             scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
         ) as run_single_scan:
             result = scan.execute(args)
@@ -81,6 +109,200 @@ class ScanEntrypointTests(unittest.TestCase):
         self.assertEqual(call_kwargs["tools"], ["subfinder"])
         self.assertTrue(call_kwargs["enable_port_scan"])
         self.assertTrue(call_kwargs["enable_web_fingerprint"])
+
+    def test_execute_nmap_args_auto_enable_port_scan_and_apply_runtime_override(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": True,
+            "oneforall": False,
+        }
+
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools="subfinder",
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args="-sV -Pn",
+            dirsearch_args=None,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        def run_single_scan_side_effect(*_args, **kwargs):
+            self.assertEqual(config.get_tool_settings("nmap")["args"], ["-sV", "-Pn"])
+            return {"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+
+        original_local_settings = config.load_local_settings()
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan.NmapSetupManager, "is_available", return_value=True
+        ), mock.patch.object(
+            scan, "run_single_scan", side_effect=run_single_scan_side_effect
+        ) as run_single_scan:
+            result = scan.execute(args)
+
+        self.assertEqual(result["saved_path"], Path("result.json"))
+        self.assertTrue(run_single_scan.call_args.kwargs["enable_port_scan"])
+        self.assertEqual(config.load_local_settings(), original_local_settings)
+
+    def test_execute_dirsearch_args_auto_enable_followup_stages(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": True,
+            "oneforall": False,
+        }
+
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools="subfinder",
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args=None,
+            dirsearch_args="--exclude-status 403",
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan.NmapSetupManager, "is_available", return_value=True
+        ), mock.patch.object(
+            scan.DirsearchTool, "check_json_support", return_value={"usable": True}
+        ), mock.patch.object(
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+        ) as run_single_scan:
+            scan.execute(args)
+
+        call_kwargs = run_single_scan.call_args.kwargs
+        self.assertTrue(call_kwargs["enable_port_scan"])
+        self.assertTrue(call_kwargs["enable_web_fingerprint"])
+        self.assertTrue(call_kwargs["enable_directory_scan"])
+
+    def test_execute_subfinder_args_select_only_subfinder_when_tools_not_given(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": True,
+            "oneforall": True,
+        }
+
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools=None,
+            subfinder_args="-rl 50",
+            oneforall_args=None,
+            nmap_args=None,
+            dirsearch_args=None,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+        ) as run_single_scan:
+            scan.execute(args)
+
+        self.assertEqual(run_single_scan.call_args.kwargs["tools"], ["subfinder"])
+
+    def test_execute_tool_args_are_merged_with_requested_tools(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": True,
+            "oneforall": True,
+        }
+
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools="oneforall",
+            subfinder_args="-rl 50",
+            oneforall_args=None,
+            nmap_args=None,
+            dirsearch_args=None,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+        ) as run_single_scan:
+            scan.execute(args)
+
+        self.assertEqual(run_single_scan.call_args.kwargs["tools"], ["oneforall", "subfinder"])
+
+    def test_validate_followup_tools_checks_nmap_separately(self):
+        with mock.patch.object(scan.NmapSetupManager, "is_available", return_value=False):
+            with self.assertRaises(ValueError):
+                scan.validate_followup_tools(
+                    {},
+                    enable_port_scan=True,
+                    enable_web_fingerprint=False,
+                    enable_directory_scan=False,
+                )
+
+    def test_validate_followup_tools_warns_when_dirsearch_unavailable(self):
+        with mock.patch.object(
+            scan.DirsearchTool,
+            "check_json_support",
+            return_value={"usable": False},
+        ), mock.patch.object(scan.console, "print") as console_print:
+            scan.validate_followup_tools(
+                {"subfinder": True},
+                enable_port_scan=False,
+                enable_web_fingerprint=False,
+                enable_directory_scan=True,
+            )
+
+        console_print.assert_called_once()
 
     def test_execute_rejects_directory_scan_without_validation(self):
         args = Namespace(
