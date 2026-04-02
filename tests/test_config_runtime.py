@@ -30,6 +30,43 @@ class ConfigRuntimeTests(unittest.TestCase):
         self.assertEqual(config.get_tool_settings("nmap")["args"], original_nmap_args)
         self.assertEqual(config.load_local_settings(), original_settings)
 
+    def test_standard_scan_preset_matches_default_tool_settings(self):
+        self.assertEqual(
+            config.get_scan_preset_tool_settings("standard"),
+            config.DEFAULT_TOOL_SETTINGS,
+        )
+
+    def test_quick_and_deep_scan_presets_apply_expected_tool_settings(self):
+        quick = config.get_scan_preset_tool_settings("quick")
+        deep = config.get_scan_preset_tool_settings("deep")
+
+        self.assertEqual(config.get_scan_preset_subdomain_tools("quick"), ["subfinder", "oneforall"])
+        self.assertEqual(config.get_scan_preset_subdomain_tools("standard"), ["subfinder", "oneforall"])
+        self.assertEqual(config.get_scan_preset_subdomain_tools("deep"), ["subfinder", "oneforall"])
+        self.assertEqual(
+            config.resolve_scan_preset_subdomain_tools("quick", available_tools=["oneforall"]),
+            ["oneforall"],
+        )
+
+        self.assertEqual(quick["subfinder"]["timeout"], 300)
+        self.assertFalse(quick["subfinder"]["use_all"])
+        self.assertEqual(quick["oneforall"]["timeout"], 600)
+        self.assertFalse(quick["oneforall"]["brute"])
+        self.assertEqual(
+            quick["nmap"]["args"],
+            [*config.NMAP_DEFAULT_ARGS, "--max-retries", "1"],
+        )
+        self.assertEqual(quick["dirsearch"]["threads"], 4)
+
+        self.assertEqual(deep["subfinder"]["timeout"], 900)
+        self.assertTrue(deep["oneforall"]["brute"])
+        self.assertEqual(deep["nmap"]["timeout"], 1200)
+        self.assertEqual(
+            deep["nmap"]["args"],
+            [*config.NMAP_DEFAULT_ARGS, "--max-retries", "3"],
+        )
+        self.assertEqual(deep["dirsearch"]["threads"], 12)
+
     def test_root_requirements_cover_bundled_tool_requirements(self):
         root_lines = Path(PROJECT_ROOT, "requirements.txt").read_text(encoding="utf-8").splitlines()
         oneforall_lines = Path(PROJECT_ROOT, "tools", "oneforall", "requirements.txt").read_text(

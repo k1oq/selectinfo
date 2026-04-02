@@ -67,6 +67,89 @@ port_presets:
     name: "Custom Ports"
     file: "ports_custom.txt"
 
+scan_presets:
+  quick:
+    label: "Quick"
+    description: "快速摸底，优先速度与稳定性"
+    subdomain_tools:
+      - "subfinder"
+      - "oneforall"
+    tool_settings:
+      subfinder:
+        timeout: 300
+        use_all: false
+        silent: true
+        extra_args: []
+      oneforall:
+        timeout: 600
+        alive: false
+        brute: false
+        fmt: "csv"
+        extra_args: []
+      nmap:
+        timeout: 300
+        args:
+          - "__PLATFORM_DEFAULT__"
+          - "--max-retries"
+          - "1"
+      dirsearch:
+        timeout: 900
+        threads: 4
+        extra_args:
+          - "--random-agent"
+          - "--delay"
+          - "0.5"
+          - "--max-rate"
+          - "2"
+          - "--retries"
+          - "1"
+          - "--exclude-status"
+          - "404,429,500-999"
+  standard:
+    label: "Standard"
+    description: "日常默认，平衡覆盖和速度"
+    subdomain_tools:
+      - "subfinder"
+      - "oneforall"
+    tool_settings: {}
+  deep:
+    label: "Deep"
+    description: "重点目标深挖，覆盖优先"
+    subdomain_tools:
+      - "subfinder"
+      - "oneforall"
+    tool_settings:
+      subfinder:
+        timeout: 900
+        use_all: true
+        silent: true
+        extra_args: []
+      oneforall:
+        timeout: 3600
+        alive: false
+        brute: true
+        fmt: "csv"
+        extra_args: []
+      nmap:
+        timeout: 1200
+        args:
+          - "__PLATFORM_DEFAULT__"
+          - "--max-retries"
+          - "3"
+      dirsearch:
+        timeout: 3600
+        threads: 12
+        extra_args:
+          - "--random-agent"
+          - "--delay"
+          - "0.1"
+          - "--max-rate"
+          - "6"
+          - "--retries"
+          - "2"
+          - "--exclude-status"
+          - "404,429,500-999"
+
 tool_defaults:
   subfinder:
     timeout: 600

@@ -26,6 +26,11 @@ class EntrypointTests(unittest.TestCase):
         self.assertIn("--port-scan", result.stdout)
         self.assertIn("--nmap-args", result.stdout)
         self.assertIn("--subfinder-args", result.stdout)
+        self.assertIn("--preset", result.stdout)
+        self.assertNotIn("--tools", result.stdout)
+        self.assertNotIn("--skip-wildcard", result.stdout)
+        self.assertNotIn("--skip-validation", result.stdout)
+        self.assertNotIn("--serial", result.stdout)
 
     def test_root_mcp_server_imports(self):
         result = self._run("-B", "-c", "import mcp_server; print(mcp_server.mcp.name)")

@@ -69,6 +69,7 @@ _PORT_SCAN = _require_section(_SETTINGS, "port_scan")
 _WEB_FINGERPRINT = _require_section(_SETTINGS, "web_fingerprint")
 _DIRSEARCH = _require_section(_SETTINGS, "dirsearch")
 _PORT_PRESETS = _require_section(_SETTINGS, "port_presets")
+_SCAN_PRESETS = _require_section(_SETTINGS, "scan_presets")
 _TOOL_DEFAULTS = _require_section(_SETTINGS, "tool_defaults")
 
 
@@ -144,8 +145,88 @@ DEFAULT_TOOL_SETTINGS = {
     },
 }
 
+SUBDOMAIN_TOOL_NAMES = ("subfinder", "oneforall")
+SCAN_PRESET_DEFAULT = "standard"
+_PLATFORM_DEFAULT_NMAP_ARGS_TOKEN = "__PLATFORM_DEFAULT__"
 _RUNTIME_TOOL_SETTINGS_STACK: list[dict[str, dict]] = []
 _RUNTIME_TOOL_SETTINGS_LOCK = threading.RLock()
+
+
+def _normalize_preset_tool_settings(tool_name: str, values: dict) -> dict:
+    normalized: dict = {}
+    for key, value in values.items():
+        if key in {"args", "extra_args"}:
+            if key == "args" and tool_name == "nmap" and value == _PLATFORM_DEFAULT_NMAP_ARGS_TOKEN:
+                values_list = [_PLATFORM_DEFAULT_NMAP_ARGS_TOKEN]
+            else:
+                if not isinstance(value, list):
+                    raise ValueError(f"scan_presets.{tool_name}.{key} must be a list in {SETTINGS_FILE}")
+                values_list = [str(item) for item in value]
+
+            expanded: list[str] = []
+            for item in values_list:
+                if key == "args" and tool_name == "nmap" and item == _PLATFORM_DEFAULT_NMAP_ARGS_TOKEN:
+                    expanded.extend(NMAP_DEFAULT_ARGS)
+                else:
+                    expanded.append(item)
+            normalized[key] = expanded
+            continue
+        normalized[key] = copy.deepcopy(value)
+    return normalized
+
+
+def _build_scan_presets() -> dict[str, dict]:
+    presets: dict[str, dict] = {}
+    for preset_name, info in _SCAN_PRESETS.items():
+        if not isinstance(info, dict):
+            raise ValueError(f"scan_presets.{preset_name} must be a mapping in {SETTINGS_FILE}")
+
+        raw_subdomain_tools = info.get("subdomain_tools", list(SUBDOMAIN_TOOL_NAMES))
+        if not isinstance(raw_subdomain_tools, list) or not raw_subdomain_tools:
+            raise ValueError(
+                f"scan_presets.{preset_name}.subdomain_tools must be a non-empty list in {SETTINGS_FILE}"
+            )
+        subdomain_tools: list[str] = []
+        for tool_name in raw_subdomain_tools:
+            normalized_name = str(tool_name).strip().lower()
+            if normalized_name not in SUBDOMAIN_TOOL_NAMES:
+                raise ValueError(
+                    f"scan_presets.{preset_name}.subdomain_tools contains unsupported tool: {tool_name}"
+                )
+            if normalized_name not in subdomain_tools:
+                subdomain_tools.append(normalized_name)
+
+        raw_tool_settings = info.get("tool_settings", {})
+        if not isinstance(raw_tool_settings, dict):
+            raise ValueError(f"scan_presets.{preset_name}.tool_settings must be a mapping in {SETTINGS_FILE}")
+
+        effective_tool_settings = copy.deepcopy(DEFAULT_TOOL_SETTINGS)
+        normalized_overrides: dict[str, dict] = {}
+        for tool_name, values in raw_tool_settings.items():
+            if tool_name not in DEFAULT_TOOL_SETTINGS:
+                raise ValueError(f"Unknown tool in scan_presets.{preset_name}: {tool_name}")
+            if not isinstance(values, dict):
+                raise ValueError(
+                    f"scan_presets.{preset_name}.tool_settings.{tool_name} must be a mapping in {SETTINGS_FILE}"
+                )
+            normalized = _normalize_preset_tool_settings(tool_name, values)
+            normalized_overrides[tool_name] = normalized
+            effective_tool_settings[tool_name].update(copy.deepcopy(normalized))
+
+        presets[str(preset_name).strip().lower()] = {
+            "label": str(info.get("label", preset_name)).strip() or str(preset_name),
+            "description": str(info.get("description", "") or "").strip(),
+            "subdomain_tools": subdomain_tools,
+            "tool_settings": effective_tool_settings,
+            "overrides": normalized_overrides,
+        }
+
+    if SCAN_PRESET_DEFAULT not in presets:
+        raise ValueError(f"scan_presets must include '{SCAN_PRESET_DEFAULT}' in {SETTINGS_FILE}")
+    return presets
+
+
+SCAN_PRESETS = _build_scan_presets()
 
 
 def load_ports(preset: str = "common") -> list[int]:
@@ -243,6 +324,96 @@ def reset_tool_settings(tool_name: str):
 def get_all_tool_settings() -> dict:
     """Return effective settings for every supported tool."""
     return {name: get_tool_settings(name) for name in DEFAULT_TOOL_SETTINGS}
+
+
+def normalize_scan_preset_name(preset_name: str | None) -> str:
+    """Normalize and validate a scan preset name."""
+    candidate = str(preset_name or SCAN_PRESET_DEFAULT).strip().lower()
+    if candidate not in SCAN_PRESETS:
+        raise ValueError(f"Unknown scan preset: {candidate}")
+    return candidate
+
+
+def list_scan_presets() -> list[str]:
+    """Return the built-in scan preset names in configured order."""
+    return list(SCAN_PRESETS.keys())
+
+
+def get_scan_preset(preset_name: str | None = None) -> dict:
+    """Return metadata and effective tool settings for a scan preset."""
+    name = normalize_scan_preset_name(preset_name)
+    return copy.deepcopy(SCAN_PRESETS[name])
+
+
+def get_scan_preset_tool_settings(preset_name: str | None = None) -> dict[str, dict]:
+    """Return effective tool settings for a scan preset."""
+    preset = get_scan_preset(preset_name)
+    return preset["tool_settings"]
+
+
+def get_scan_preset_overrides(preset_name: str | None = None) -> dict[str, dict]:
+    """Return runtime overrides produced by a scan preset."""
+    return get_scan_preset_tool_settings(preset_name)
+
+
+def get_scan_preset_subdomain_tools(preset_name: str | None = None) -> list[str]:
+    """Return the preferred subdomain-tool order for a scan preset."""
+    preset = get_scan_preset(preset_name)
+    return list(preset["subdomain_tools"])
+
+
+def resolve_scan_preset_subdomain_tools(
+    preset_name: str | None = None,
+    available_tools: list[str] | tuple[str, ...] | None = None,
+) -> list[str]:
+    """Resolve preset-preferred subdomain tools against the available tool set."""
+    preferred_tools = get_scan_preset_subdomain_tools(preset_name)
+    if available_tools is None:
+        return preferred_tools
+
+    normalized_available = [str(name).strip().lower() for name in available_tools if str(name).strip()]
+    selected = [name for name in preferred_tools if name in normalized_available]
+    return selected or normalized_available
+
+
+def merge_tool_setting_layers(*layers: dict[str, dict] | None) -> dict[str, dict]:
+    """Merge multiple tool-setting layers, later layers winning per key."""
+    merged: dict[str, dict] = {}
+    for layer in layers:
+        for tool_name, values in (layer or {}).items():
+            bucket = merged.setdefault(tool_name, {})
+            for key, value in values.items():
+                bucket[key] = copy.deepcopy(value)
+    return merged
+
+
+def summarize_scan_preset(preset_name: str | None = None) -> str:
+    """Return a short human-readable summary for a preset."""
+    preset = get_scan_preset(preset_name)
+    settings = preset["tool_settings"]
+    subfinder = settings["subfinder"]
+    oneforall = settings["oneforall"]
+    nmap = settings["nmap"]
+    dirsearch = settings["dirsearch"]
+    nmap_retries = "default"
+    nmap_args = list(nmap.get("args", []))
+    if "--max-retries" in nmap_args:
+        index = nmap_args.index("--max-retries")
+        if index + 1 < len(nmap_args):
+            nmap_retries = str(nmap_args[index + 1])
+    dirsearch_rate = "default"
+    dirsearch_args = list(dirsearch.get("extra_args", []))
+    if "--max-rate" in dirsearch_args:
+        index = dirsearch_args.index("--max-rate")
+        if index + 1 < len(dirsearch_args):
+            dirsearch_rate = str(dirsearch_args[index + 1])
+    return (
+        f"tools={','.join(preset['subdomain_tools'])} ; "
+        f"subfinder timeout={subfinder.get('timeout')}s use_all={subfinder.get('use_all')} ; "
+        f"oneforall timeout={oneforall.get('timeout')}s brute={oneforall.get('brute')} ; "
+        f"nmap timeout={nmap.get('timeout')}s retries={nmap_retries} ; "
+        f"dirsearch threads={dirsearch.get('threads')} rate={dirsearch_rate}"
+    )
 
 
 @contextmanager

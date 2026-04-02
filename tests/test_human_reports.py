@@ -21,6 +21,7 @@ class HumanReportsTests(unittest.TestCase):
         return {
             "target": "example.com",
             "scan_time": "2026-04-01T10:00:00",
+            "scan_preset": "deep",
             "duration_seconds": 12.5,
             "tools_used": ["subfinder", "oneforall"],
             "wildcard": {"detected": False},
@@ -68,6 +69,7 @@ class HumanReportsTests(unittest.TestCase):
     def _sample_batch_summary(self) -> dict:
         return {
             "scan_time": "2026-04-01T10:00:00",
+            "scan_preset": "quick",
             "tools_used": ["subfinder"],
             "statistics": {
                 "requested_domains": 2,
@@ -123,6 +125,7 @@ class HumanReportsTests(unittest.TestCase):
         self.assertEqual(rows[0]["分组"], "概览")
         self.assertEqual(rows[0]["名称"], "目标域名")
         self.assertEqual(rows[0]["数值"], "example.com")
+        self.assertTrue(any(row["分组"] == "概览" and row["名称"] == "参数档位" and row["数值"] == "deep" for row in rows))
         self.assertTrue(any(row["分组"] == "工具状态" and row["名称"] == "subfinder" for row in rows))
         self.assertTrue(any(row["分组"] == "Web目标" and row["名称"] == "https://www.example.com" for row in rows))
         self.assertTrue(any(row["分组"] == "目录发现" and row["数值"] == "/admin" for row in rows))
@@ -134,6 +137,7 @@ class HumanReportsTests(unittest.TestCase):
         )
 
         rows = list(csv.DictReader(StringIO(report)))
+        self.assertTrue(any(row["分组"] == "概览" and row["名称"] == "参数档位" and row["数值"] == "quick" for row in rows))
         self.assertTrue(any(row["分组"] == "统计" and row["名称"] == "成功数" and row["数值"] == "1" for row in rows))
         self.assertTrue(any(row["分组"] == "域名概览" and row["名称"] == "a.com" for row in rows))
         self.assertTrue(any(row["分组"] == "域名概览" and row["名称"] == "b.com" and row["状态"] == "error" for row in rows))
@@ -159,6 +163,7 @@ class HumanReportsTests(unittest.TestCase):
                     ["概览", "统计", "工具状态", "子域名", "端口扫描", "Web指纹", "目录扫描"],
                 )
                 self.assertEqual(workbook["概览"]["A2"].value, "目标域名")
+                self.assertEqual(workbook["概览"]["B5"].value, "deep")
                 self.assertEqual(workbook["子域名"]["A2"].value, "www.example.com")
                 self.assertEqual(workbook["端口扫描"]["A2"].value, "1.1.1.1")
                 self.assertEqual(workbook["目录扫描"]["B2"].value, "/admin")
@@ -179,6 +184,7 @@ class HumanReportsTests(unittest.TestCase):
                     workbook.sheetnames,
                     ["概览", "统计", "域名概览", "端口扫描", "Web指纹", "目录扫描"],
                 )
+                self.assertEqual(workbook["概览"]["B4"].value, "quick")
                 self.assertEqual(workbook["域名概览"]["A2"].value, "a.com")
                 self.assertEqual(workbook["Web指纹"]["B2"].value, "completed")
             finally:

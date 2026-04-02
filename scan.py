@@ -47,13 +47,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--targets-file", help="批量目标文件，每行一个域名")
     parser.add_argument(
         "--tools",
-        help="指定子域名工具，逗号分隔，例如 subfinder,oneforall；默认自动选择可用工具。",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--preset",
+        choices=config.list_scan_presets(),
+        default=config.SCAN_PRESET_DEFAULT,
+        help="扫描参数预设档位，默认 standard",
     )
     parser.add_argument("--subfinder-args", help="本次运行临时覆盖 Subfinder 参数字符串")
     parser.add_argument("--oneforall-args", help="本次运行临时覆盖 OneForAll 参数字符串")
-    parser.add_argument("--skip-wildcard", action="store_true", help="跳过泛解析检测")
-    parser.add_argument("--skip-validation", action="store_true", help="跳过 DNS 存活验证")
-    parser.add_argument("--serial", action="store_true", help="串行运行子域名工具")
+    parser.add_argument("--skip-wildcard", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-validation", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--serial", action="store_true", help=argparse.SUPPRESS)
 
     parser.add_argument("--port-scan", action="store_true", help="启用端口扫描")
     parser.add_argument("--nmap-args", help="本次运行临时覆盖端口扫描阶段的 nmap 参数字符串")
@@ -125,7 +131,7 @@ def merge_cli_requested_tools(
     available_tool_names: list[str] | tuple[str, ...],
 ) -> list[str] | None:
     implied_tools = [name for name in available_tool_names if name in cli_tool_overrides]
-    if requested_tools is None:
+    if not requested_tools:
         return implied_tools or None
 
     merged = list(requested_tools)
@@ -133,6 +139,27 @@ def merge_cli_requested_tools(
         if tool_name not in merged:
             merged.append(tool_name)
     return merged
+
+
+def resolve_requested_tools(
+    requested_tools: list[str] | None,
+    *,
+    preset_name: str,
+    cli_tool_overrides: dict[str, str],
+    available_tool_names: list[str] | tuple[str, ...],
+    available_installed_tools: list[str],
+) -> list[str] | None:
+    if requested_tools is not None:
+        return merge_cli_requested_tools(requested_tools, cli_tool_overrides, available_tool_names)
+
+    implied_tools = [name for name in available_tool_names if name in cli_tool_overrides]
+    if implied_tools:
+        return implied_tools
+
+    return config.resolve_scan_preset_subdomain_tools(
+        preset_name,
+        available_tools=available_installed_tools,
+    )
 
 
 def resolve_targets(target: str | None, targets_file: str | None) -> list[str]:
@@ -204,6 +231,7 @@ def print_plan(
     targets: list[str],
     tools: list[str],
     *,
+    preset_name: str,
     skip_wildcard: bool,
     skip_validation: bool,
     parallel: bool,
@@ -211,6 +239,7 @@ def print_plan(
     port_mode: str,
     enable_web_fingerprint: bool,
     enable_directory_scan: bool,
+    preset_summary: str | None = None,
     tool_arg_overrides: dict[str, str] | None = None,
     background: bool = False,
 ):
@@ -226,6 +255,9 @@ def print_plan(
         target_summary = preview + suffix
 
     table.add_row("目标", target_summary)
+    table.add_row("参数档位", preset_name)
+    if preset_summary:
+        table.add_row("档位摘要", preset_summary)
     table.add_row("子域名工具", ", ".join(tools))
     if tool_arg_overrides:
         ordered_names = ("subfinder", "oneforall", "nmap", "dirsearch")
@@ -309,6 +341,7 @@ def run_single_scan(
     *,
     target: str,
     tools: list[str],
+    scan_preset: str = config.SCAN_PRESET_DEFAULT,
     skip_wildcard: bool,
     skip_validation: bool,
     parallel: bool,
@@ -326,6 +359,7 @@ def run_single_scan(
         skip_validation=skip_validation,
         parallel=parallel,
     )
+    result["scan_preset"] = scan_preset
 
     saved_path = scanner.save_result(output_path=Path(output_path) if output_path else None)
 
@@ -359,6 +393,7 @@ def run_batch_scan(
     *,
     targets: list[str],
     tools: list[str],
+    scan_preset: str = config.SCAN_PRESET_DEFAULT,
     skip_wildcard: bool,
     skip_validation: bool,
     parallel: bool,
@@ -377,6 +412,7 @@ def run_batch_scan(
     batch_summary, summary_path = runner.run(
         domains=targets,
         tools=tools,
+        scan_preset=scan_preset,
         skip_wildcard=skip_wildcard,
         skip_validation=skip_validation,
         parallel=parallel,
@@ -404,7 +440,13 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
     if len(targets) > 1 and args.output:
         raise ValueError("--output 仅支持单目标模式，请在批量模式下使用 --results-dir。")
 
-    cli_tool_arg_overrides, runtime_tool_overrides = parse_cli_tool_overrides(args)
+    preset_name = config.normalize_scan_preset_name(getattr(args, "preset", None))
+    preset_runtime_tool_overrides = config.get_scan_preset_overrides(preset_name)
+    cli_tool_arg_overrides, cli_runtime_tool_overrides = parse_cli_tool_overrides(args)
+    runtime_tool_overrides = config.merge_tool_setting_layers(
+        preset_runtime_tool_overrides,
+        cli_runtime_tool_overrides,
+    )
     requested_tools = parse_requested_tools(args.tools)
     enable_port_scan, enable_web_fingerprint, enable_directory_scan = resolve_stage_flags(
         args.port_scan or ("nmap" in cli_tool_arg_overrides),
@@ -416,10 +458,16 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
 
     with config.override_tool_settings(runtime_tool_overrides):
         scanner = SubdomainScanner()
-        requested_tools = merge_cli_requested_tools(
+        tool_status = scanner.check_tools()
+        available_installed_tools = [
+            name for name in scanner.AVAILABLE_TOOLS if tool_status.get(name)
+        ]
+        requested_tools = resolve_requested_tools(
             requested_tools,
-            cli_tool_arg_overrides,
-            tuple(scanner.AVAILABLE_TOOLS),
+            preset_name=preset_name,
+            cli_tool_overrides=cli_tool_arg_overrides,
+            available_tool_names=tuple(scanner.AVAILABLE_TOOLS),
+            available_installed_tools=available_installed_tools,
         )
         tools, tool_status = select_tools(scanner, requested_tools)
         validate_followup_tools(
@@ -432,6 +480,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         print_plan(
             targets,
             tools,
+            preset_name=preset_name,
             skip_wildcard=args.skip_wildcard,
             skip_validation=args.skip_validation,
             parallel=not args.serial,
@@ -439,6 +488,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             port_mode=args.port_mode,
             enable_web_fingerprint=enable_web_fingerprint,
             enable_directory_scan=enable_directory_scan,
+            preset_summary=config.summarize_scan_preset(preset_name),
             tool_arg_overrides=cli_tool_arg_overrides,
             background=bool(getattr(args, "background", False) or getattr(args, "_background_child", False)),
         )
@@ -449,6 +499,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
                     scanner,
                     target=targets[0],
                     tools=tools,
+                    scan_preset=preset_name,
                     skip_wildcard=args.skip_wildcard,
                     skip_validation=args.skip_validation,
                     parallel=not args.serial,
@@ -464,6 +515,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
                 scanner,
                 targets=targets,
                 tools=tools,
+                scan_preset=preset_name,
                 skip_wildcard=args.skip_wildcard,
                 skip_validation=args.skip_validation,
                 parallel=not args.serial,

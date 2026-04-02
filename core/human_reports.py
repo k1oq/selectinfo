@@ -173,6 +173,7 @@ def build_single_scan_report(result: dict[str, Any], source_path: Path | str | N
     add("概览", "目标域名", value=result.get("target", "-"))
     add("概览", "结果文件", value=source_path or "-")
     add("概览", "扫描时间", value=result.get("scan_time", "-"))
+    add("概览", "参数档位", value=result.get("scan_preset", "-"))
     add("概览", "扫描耗时(秒)", value=result.get("duration_seconds", "-"))
     add("概览", "使用工具", value=", ".join(result.get("tools_used", [])) or "-")
     add("概览", "泛解析", status="是" if wildcard.get("detected") else "否", value=", ".join(wildcard.get("ips", [])))
@@ -286,6 +287,7 @@ def build_batch_summary_report(summary: dict[str, Any], source_path: Path | str 
 
     add("概览", "汇总文件", value=source_path or "-")
     add("概览", "扫描时间", value=summary.get("scan_time", "-"))
+    add("概览", "参数档位", value=summary.get("scan_preset", "-"))
     add("概览", "使用工具", value=", ".join(summary.get("tools_used", [])) or "-")
     _add_blank_row(rows)
 
@@ -336,6 +338,7 @@ def build_single_scan_workbook(
                     ["目标域名", result.get("target", "-")],
                     ["结果文件", source_path or "-"],
                     ["扫描时间", result.get("scan_time", "-")],
+                    ["参数档位", result.get("scan_preset", "-")],
                     ["扫描耗时(秒)", result.get("duration_seconds", "-")],
                     ["使用工具", ", ".join(result.get("tools_used", [])) or "-"],
                     ["泛解析", "是" if wildcard.get("detected") else "否"],
@@ -471,6 +474,7 @@ def build_batch_summary_workbook(
                 [
                     ["汇总文件", source_path or "-"],
                     ["扫描时间", summary.get("scan_time", "-")],
+                    ["参数档位", summary.get("scan_preset", "-")],
                     ["使用工具", ", ".join(summary.get("tools_used", [])) or "-"],
                 ],
             ),

@@ -1,6 +1,7 @@
 import unittest
 
 from _bootstrap import PROJECT_ROOT  # noqa: F401
+import config
 from core.batch_scan import BatchScanRunner
 
 
@@ -33,6 +34,7 @@ class BatchScanRunnerTests(unittest.TestCase):
         self.assertEqual(summary["web_target_count"], 0)
         self.assertEqual(summary["directory_scan_status"], "not_started")
         self.assertEqual(summary["dirsearch_finding_count"], 0)
+        self.assertEqual(summary["scan_preset"], config.SCAN_PRESET_DEFAULT)
 
     def test_build_item_summary_for_wildcard_result(self):
         summary = BatchScanRunner.build_item_summary(
@@ -153,6 +155,7 @@ class BatchScanRunnerTests(unittest.TestCase):
         self.assertEqual(summary["statistics"]["directory_scan_completed_count"], 1)
         self.assertEqual(summary["statistics"]["total_web_targets"], 2)
         self.assertEqual(summary["statistics"]["total_dirsearch_findings"], 3)
+        self.assertEqual(summary["scan_preset"], config.SCAN_PRESET_DEFAULT)
 
     def test_run_forwards_scan_options_to_scanner(self):
         class FakeScanner:

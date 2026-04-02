@@ -32,6 +32,7 @@ class BatchScanRunner:
         self,
         domains: list[str],
         tools: list[str],
+        scan_preset: str = config.SCAN_PRESET_DEFAULT,
         skip_wildcard: bool = False,
         skip_validation: bool = False,
         parallel: bool = True,
@@ -55,6 +56,7 @@ class BatchScanRunner:
                     skip_validation=skip_validation,
                     parallel=parallel,
                 )
+                result["scan_preset"] = scan_preset
 
                 saved_path = self.scanner.save_result()
                 item_summary = self.build_item_summary(domain=domain, result=result, saved_path=saved_path)
@@ -135,6 +137,7 @@ class BatchScanRunner:
                 summary_items.append(
                     {
                         "domain": domain,
+                        "scan_preset": scan_preset,
                         "status": "error",
                         "message": str(exc),
                         "saved_path": None,
@@ -151,7 +154,7 @@ class BatchScanRunner:
                     }
                 )
 
-        batch_summary = self.build_summary(summary_items, tools=tools)
+        batch_summary = self.build_summary(summary_items, tools=tools, scan_preset=scan_preset)
         batch_summary["statistics"]["requested_domains"] = total
         batch_summary["statistics"]["completed_success_count"] = success
         summary_path = self.save_summary(batch_summary)
@@ -187,6 +190,7 @@ class BatchScanRunner:
 
         return {
             "domain": domain,
+            "scan_preset": result.get("scan_preset", config.SCAN_PRESET_DEFAULT),
             "status": status,
             "message": message,
             "saved_path": str(saved_path) if saved_path else None,
@@ -203,7 +207,11 @@ class BatchScanRunner:
         }
 
     @staticmethod
-    def build_summary(summary_items: list[dict], tools: list[str]) -> dict:
+    def build_summary(
+        summary_items: list[dict],
+        tools: list[str],
+        scan_preset: str = config.SCAN_PRESET_DEFAULT,
+    ) -> dict:
         total = len(summary_items)
         success_count = sum(1 for item in summary_items if item["status"] == "success")
         error_count = sum(1 for item in summary_items if item["status"] == "error")
@@ -225,6 +233,7 @@ class BatchScanRunner:
 
         return {
             "scan_time": datetime.now().isoformat(),
+            "scan_preset": scan_preset,
             "tools_used": tools,
             "statistics": {
                 "total_domains": total,

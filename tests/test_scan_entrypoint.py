@@ -110,6 +110,55 @@ class ScanEntrypointTests(unittest.TestCase):
         self.assertTrue(call_kwargs["enable_port_scan"])
         self.assertTrue(call_kwargs["enable_web_fingerprint"])
 
+    def test_execute_preset_applies_runtime_overrides_without_enabling_stages(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": True,
+            "oneforall": True,
+        }
+
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools=None,
+            preset="quick",
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args=None,
+            dirsearch_args=None,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        def run_single_scan_side_effect(*_args, **kwargs):
+            self.assertEqual(config.get_tool_settings("subfinder")["timeout"], 300)
+            self.assertEqual(config.get_tool_settings("oneforall")["timeout"], 600)
+            return {"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan, "run_single_scan", side_effect=run_single_scan_side_effect
+        ) as run_single_scan:
+            scan.execute(args)
+
+        call_kwargs = run_single_scan.call_args.kwargs
+        self.assertEqual(call_kwargs["scan_preset"], "quick")
+        self.assertEqual(call_kwargs["tools"], ["subfinder", "oneforall"])
+        self.assertFalse(call_kwargs["enable_port_scan"])
+        self.assertFalse(call_kwargs["enable_web_fingerprint"])
+        self.assertFalse(call_kwargs["enable_directory_scan"])
+
     def test_execute_nmap_args_auto_enable_port_scan_and_apply_runtime_override(self):
         fake_scanner = mock.Mock()
         fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
@@ -157,6 +206,91 @@ class ScanEntrypointTests(unittest.TestCase):
         self.assertEqual(result["saved_path"], Path("result.json"))
         self.assertTrue(run_single_scan.call_args.kwargs["enable_port_scan"])
         self.assertEqual(config.load_local_settings(), original_local_settings)
+
+    def test_execute_cli_tool_override_wins_over_preset(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": True,
+            "oneforall": False,
+        }
+
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools="subfinder",
+            preset="quick",
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args="-sV -Pn",
+            dirsearch_args=None,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        def run_single_scan_side_effect(*_args, **kwargs):
+            self.assertEqual(config.get_tool_settings("nmap")["timeout"], 300)
+            self.assertEqual(config.get_tool_settings("nmap")["args"], ["-sV", "-Pn"])
+            return {"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan.NmapSetupManager, "is_available", return_value=True
+        ), mock.patch.object(
+            scan, "run_single_scan", side_effect=run_single_scan_side_effect
+        ) as run_single_scan:
+            scan.execute(args)
+
+        self.assertEqual(run_single_scan.call_args.kwargs["scan_preset"], "quick")
+
+    def test_execute_quick_preset_falls_back_to_available_tool(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": False,
+            "oneforall": True,
+        }
+
+        args = Namespace(
+            target="example.com",
+            targets_file=None,
+            tools=None,
+            preset="quick",
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args=None,
+            dirsearch_args=None,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=False,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
+        ) as run_single_scan:
+            scan.execute(args)
+
+        self.assertEqual(run_single_scan.call_args.kwargs["tools"], ["oneforall"])
 
     def test_execute_dirsearch_args_auto_enable_followup_stages(self):
         fake_scanner = mock.Mock()
@@ -348,6 +482,44 @@ class ScanEntrypointTests(unittest.TestCase):
         self.assertIn("example.com", command)
         self.assertIn("--port-scan", command)
 
+    def test_run_single_scan_sets_scan_preset_on_result(self):
+        class FakeScanner:
+            def __init__(self):
+                self.last_result = None
+
+            def scan(self, **kwargs):
+                self.last_result = {
+                    "wildcard": {"detected": False},
+                    "subdomains": [],
+                }
+                return self.last_result
+
+            def save_result(self, output_path=None):
+                destination = Path(output_path)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text("{}", encoding="utf-8")
+                return destination
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "example.json"
+            scanner = FakeScanner()
+            scan.run_single_scan(
+                scanner,
+                target="example.com",
+                tools=["subfinder"],
+                scan_preset="deep",
+                skip_wildcard=False,
+                skip_validation=False,
+                parallel=True,
+                enable_port_scan=False,
+                port_mode="common",
+                enable_web_fingerprint=False,
+                enable_directory_scan=False,
+                output_path=str(output_path),
+            )
+
+        self.assertEqual(scanner.last_result["scan_preset"], "deep")
+
     def test_run_single_scan_writes_summary_after_followups(self):
         class FakeScanner:
             def scan(self, **kwargs):
@@ -412,6 +584,7 @@ class ScanEntrypointTests(unittest.TestCase):
                 mock.Mock(),
                 targets=["example.com"],
                 tools=["subfinder"],
+                scan_preset="quick",
                 skip_wildcard=False,
                 skip_validation=False,
                 parallel=True,
@@ -424,6 +597,7 @@ class ScanEntrypointTests(unittest.TestCase):
 
         self.assertEqual(result["summary_path"], fake_summary_path)
         self.assertEqual(result["report_path"], Path("batch.summary.xlsx"))
+        self.assertEqual(batch_runner.run.call_args.kwargs["scan_preset"], "quick")
         write_item_reports.assert_called_once_with(fake_batch_summary)
         write_summary_report.assert_called_once_with(
             fake_batch_summary,

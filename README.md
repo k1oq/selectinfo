@@ -45,7 +45,9 @@ python -m pip install -r requirements.txt
 
 ```bash
 python scan.py example.com --port-scan --web-fingerprint
-python scan.py example.com --tools subfinder --nmap-args "-sV -Pn"
+python scan.py example.com --preset quick --port-scan
+python scan.py example.com --preset deep --port-scan --web-fingerprint --directory-scan
+python scan.py example.com --nmap-args "-sV -Pn"
 python main.py
 ```
 
@@ -156,22 +158,40 @@ chmod +x tools/subfinder/subfinder
 支持三种入口：
 
 - `python scan.py <domain>`
+- `python scan.py <domain> --preset quick|standard|deep`
 - `python scan.py <domain> --nmap-args "-sV -Pn"`（仅本次运行生效，不会修改本地配置）
   - 闈炰氦浜掑紡鎵弿锛岄€傚悎浜虹被鐢ㄦ埛鐩存帴鎵ц鍗曠洰鏍囨垨鎵归噺浠诲姟
 - `python main.py`
-  - 交互式扫描和工具配置
+  - 交互式扫描和工具配置，默认先选 `quick / standard / deep`
 - 直接编辑 `config/local_settings.json`
   - 适合修改本机工具路径、本机参数覆盖和排障
 - `python mcp_server.py`
   - 通过 MCP 管理工具配置
 
+### 参数档位
+
+- `quick`：更轻更快，适合快速摸底
+- `standard`：当前默认参数强度
+- `deep`：更重更激进，默认启用更强的 `OneForAll` 参数
+
+档位只控制工具参数强度，不自动决定是否启用端口扫描、Web 指纹或目录扫描；这些阶段仍由现有开关控制。
+
+默认行为：
+
+- 子域名工具默认使用全部可用工具
+- 默认开启泛解析检测
+- 默认开启 DNS 存活验证
+- 多个子域名工具时默认并行运行
+
 ### 配置示例
 
 ```bash
 python scan.py example.com --port-scan --web-fingerprint
+python scan.py example.com --preset quick --port-scan
+python scan.py example.com --preset deep --port-scan --web-fingerprint --directory-scan
 python scan.py --targets-file domains.txt --port-scan --web-fingerprint --directory-scan
-python scan.py example.com --tools subfinder --output results/example.json
-python scan.py example.com --tools oneforall --subfinder-args "-rl 50" --nmap-args "-sV -Pn"
+python scan.py example.com --output results/example.json
+python scan.py example.com --subfinder-args "-rl 50"
 python tools/self_check.py
 # edit config/local_settings.json
 ```

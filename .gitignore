@@ -21,6 +21,8 @@ env/
 runtime/
 results/*.json
 results/*.log
+results/*.xlsx
+results/*.csv
 results/temp/
 tools/oneforall/results/
 tools/oneforall/.db/
