@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--results-dir", help="覆盖默认 results 目录")
     parser.add_argument("--output", help="单目标模式下显式指定 JSON 结果路径")
-    parser.add_argument("--summary-output", help="显式指定 CSV 摘要路径")
+    parser.add_argument("--summary-output", help="显式指定摘要报告路径（统一输出 .xlsx）")
     parser.add_argument("--background", action="store_true", help="后台运行，并将日志写入 runtime/jobs")
 
     parser.add_argument("--_background-child", action="store_true", help=argparse.SUPPRESS)

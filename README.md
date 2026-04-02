@@ -205,7 +205,7 @@ python mcp_server.py
 
 - 单个目标结果: `<domain>_YYYYMMDD_HHMMSS.json`
 - 批量汇总结果: `batch_summary_YYYYMMDD_HHMMSS.json`
-- 面向人类的摘要报告: `<name>.summary.csv`
+- 面向人类的摘要报告: 单目标默认 `<domain>_YYYYMMDD_HHMMSS.xlsx`，批量默认 `batch_summary_YYYYMMDD_HHMMSS.xlsx`（默认多 Sheet）
 
 单次扫描结果的核心字段包括：
 

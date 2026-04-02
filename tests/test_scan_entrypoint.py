@@ -99,7 +99,7 @@ class ScanEntrypointTests(unittest.TestCase):
         ), mock.patch.object(
             scan.NmapSetupManager, "is_available", return_value=True
         ), mock.patch.object(
-            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
         ) as run_single_scan:
             result = scan.execute(args)
 
@@ -141,7 +141,7 @@ class ScanEntrypointTests(unittest.TestCase):
 
         def run_single_scan_side_effect(*_args, **kwargs):
             self.assertEqual(config.get_tool_settings("nmap")["args"], ["-sV", "-Pn"])
-            return {"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+            return {"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
 
         original_local_settings = config.load_local_settings()
 
@@ -194,7 +194,7 @@ class ScanEntrypointTests(unittest.TestCase):
         ), mock.patch.object(
             scan.DirsearchTool, "check_json_support", return_value={"usable": True}
         ), mock.patch.object(
-            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
         ) as run_single_scan:
             scan.execute(args)
 
@@ -235,7 +235,7 @@ class ScanEntrypointTests(unittest.TestCase):
         with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
             scan, "print_plan"
         ), mock.patch.object(
-            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
         ) as run_single_scan:
             scan.execute(args)
 
@@ -273,7 +273,7 @@ class ScanEntrypointTests(unittest.TestCase):
         with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
             scan, "print_plan"
         ), mock.patch.object(
-            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.csv")}
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
         ) as run_single_scan:
             scan.execute(args)
 
@@ -364,7 +364,7 @@ class ScanEntrypointTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             output_path = Path(tmp) / "example.json"
-            report_path = Path(tmp) / "example.summary.csv"
+            report_path = Path(tmp) / "example.summary.xlsx"
 
             with mock.patch.object(scan, "run_port_scan", return_value={"1.1.1.1": [80]}), mock.patch.object(
                 scan, "run_web_fingerprint", return_value={"targets": [{"url": "http://www.example.com"}]}
@@ -401,9 +401,9 @@ class ScanEntrypointTests(unittest.TestCase):
         fake_summary_path = Path(PROJECT_ROOT) / "results" / "batch_summary.json"
 
         with mock.patch.object(scan, "BatchScanRunner") as batch_runner_cls, mock.patch.object(
-            scan, "write_batch_item_reports", return_value=[Path("a.summary.csv")]
+            scan, "write_batch_item_reports", return_value=[Path("a.summary.xlsx")]
         ) as write_item_reports, mock.patch.object(
-            scan, "write_batch_summary_report", return_value=Path("batch.summary.csv")
+            scan, "write_batch_summary_report", return_value=Path("batch.summary.xlsx")
         ) as write_summary_report:
             batch_runner = batch_runner_cls.return_value
             batch_runner.run.return_value = (fake_batch_summary, fake_summary_path)
@@ -419,16 +419,16 @@ class ScanEntrypointTests(unittest.TestCase):
                 port_mode="common",
                 enable_web_fingerprint=False,
                 enable_directory_scan=False,
-                summary_output="batch.summary.csv",
+                summary_output="batch.summary.xlsx",
             )
 
         self.assertEqual(result["summary_path"], fake_summary_path)
-        self.assertEqual(result["report_path"], Path("batch.summary.csv"))
+        self.assertEqual(result["report_path"], Path("batch.summary.xlsx"))
         write_item_reports.assert_called_once_with(fake_batch_summary)
         write_summary_report.assert_called_once_with(
             fake_batch_summary,
             fake_summary_path,
-            output_path="batch.summary.csv",
+            output_path="batch.summary.xlsx",
         )
 
 
