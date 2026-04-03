@@ -12,6 +12,7 @@ from utils.logger import console
 
 from .directory_scanner import DirectoryScanner
 from .port_scanner import PortScanner
+from .reverse_ip_scanner import ReverseIPScanner
 from .web_fingerprint_scanner import WebFingerprintScanner
 
 
@@ -82,6 +83,29 @@ def run_web_fingerprint(
         return {}
     except Exception as exc:
         console.print(f"[red]Web 指纹识别出错: {exc}[/red]")
+        return {}
+
+
+def run_reverse_ip(
+    target_ip: str,
+    open_ports: list[int] | None = None,
+    output_path: Path | str | None = None,
+) -> dict[str, Any]:
+    """Run reverse-IP candidate collection for a direct IP target."""
+    console.print("\n[cyan]IP 反查[/cyan]")
+    try:
+        scanner = ReverseIPScanner()
+        result = scanner.scan(target_ip, open_ports=open_ports)
+        if result:
+            merge_result_field(output_path, "reverse_ip", result)
+            if output_path:
+                console.print(f"\n[green]缁撴灉宸叉洿鏂拌嚦: {Path(output_path)}[/green]")
+        return result
+    except KeyboardInterrupt:
+        console.print("\n[yellow]IP 反查已中断[/yellow]")
+        return {}
+    except Exception as exc:
+        console.print(f"[red]IP 反查出错: {exc}[/red]")
         return {}
 
 

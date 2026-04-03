@@ -11,6 +11,7 @@ from typing import Callable
 import config
 from utils import atomic_write_json
 from utils.logger import console
+from .reverse_ip_scanner import merge_reverse_ip_into_scan_result, persist_reverse_ip_enrichment
 
 
 class BatchScanRunner:
@@ -20,11 +21,13 @@ class BatchScanRunner:
         self,
         scanner,
         run_port_scan: Callable,
+        run_reverse_ip: Callable | None = None,
         run_web_fingerprint: Callable | None = None,
         run_directory_scan: Callable | None = None,
     ):
         self.scanner = scanner
         self.run_port_scan = run_port_scan
+        self.run_reverse_ip = run_reverse_ip
         self.run_web_fingerprint = run_web_fingerprint
         self.run_directory_scan = run_directory_scan
 
@@ -36,6 +39,7 @@ class BatchScanRunner:
         skip_wildcard: bool = False,
         skip_validation: bool = False,
         parallel: bool = True,
+        enable_reverse_ip: bool = False,
         enable_port_scan: bool = False,
         port_scan_mode: str | None = None,
         enable_web_fingerprint: bool = False,
@@ -59,17 +63,34 @@ class BatchScanRunner:
                 result["scan_preset"] = scan_preset
 
                 saved_path = self.scanner.save_result()
+                port_results: dict[str, list[int]] = {}
+
+                if result.get("subdomains") and enable_port_scan and not result.get("wildcard", {}).get("detected"):
+                    port_results = self.run_port_scan(
+                        result["subdomains"],
+                        mode=port_scan_mode,
+                        output_path=saved_path,
+                    )
+
+                if (
+                    enable_reverse_ip
+                    and result.get("target_type") == "ip"
+                    and self.run_reverse_ip is not None
+                ):
+                    reverse_result = self.run_reverse_ip(
+                        result.get("target", ""),
+                        open_ports=sorted(port_results.get(result.get("target", ""), [])) if port_results else None,
+                        output_path=saved_path,
+                    )
+                    merge_reverse_ip_into_scan_result(result, reverse_result)
+                    persist_reverse_ip_enrichment(saved_path, result)
+
                 item_summary = self.build_item_summary(domain=domain, result=result, saved_path=saved_path)
 
                 if result.get("subdomains"):
                     success += 1
 
                     if enable_port_scan and not result.get("wildcard", {}).get("detected"):
-                        port_results = self.run_port_scan(
-                            result["subdomains"],
-                            mode=port_scan_mode,
-                            output_path=saved_path,
-                        )
                         if port_results:
                             item_summary["port_scan_status"] = "completed"
                             item_summary["open_port_count"] = sum(

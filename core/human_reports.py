@@ -138,6 +138,7 @@ def build_single_scan_report(result: dict[str, Any], source_path: Path | str | N
     wildcard = result.get("wildcard", {})
     tool_runs = result.get("tool_runs", {})
     port_scan = result.get("port_scan", {})
+    reverse_ip = result.get("reverse_ip", {})
     web_fingerprint = result.get("web_fingerprint", {})
     directory_scan = result.get("directory_scan", {})
 
@@ -249,6 +250,20 @@ def build_single_scan_report(result: dict[str, Any], source_path: Path | str | N
                 detail_1=item["redirect"],
             )
 
+    reverse_domains = reverse_ip.get("domains", [])
+    if reverse_domains:
+        _add_blank_row(rows)
+        for item in reverse_domains:
+            add(
+                "IP反查",
+                item.get("domain", "-"),
+                status="match" if item.get("matches_target") else "candidate",
+                value=item.get("confidence", "-"),
+                detail_1=", ".join(item.get("sources", [])) or "-",
+                detail_2=", ".join(str(port) for port in item.get("ports", [])) or "-",
+                detail_3=", ".join(item.get("resolved_ips", [])) or "-",
+            )
+
     return _rows_to_csv(rows)
 
 
@@ -325,6 +340,7 @@ def build_single_scan_workbook(
     tool_runs = result.get("tool_runs", {})
     subdomains = result.get("subdomains", [])
     port_scan = result.get("port_scan", {})
+    reverse_ip = result.get("reverse_ip", {})
     web_fingerprint = result.get("web_fingerprint", {})
     directory_scan = result.get("directory_scan", {})
 
@@ -456,6 +472,27 @@ def build_single_scan_workbook(
             ),
         )
     )
+    reverse_domains = reverse_ip.get("domains", [])
+    if reverse_domains:
+        sheets.append(
+            (
+                "IP反查",
+                _sheet_rows(
+                    ["Domain", "Match", "Confidence", "Sources", "Ports", "Resolved IPs"],
+                    [
+                        [
+                            item.get("domain", "-"),
+                            "yes" if item.get("matches_target") else "no",
+                            item.get("confidence", "-"),
+                            ", ".join(item.get("sources", [])) or "-",
+                            ", ".join(str(port) for port in item.get("ports", [])) or "-",
+                            ", ".join(item.get("resolved_ips", [])) or "-",
+                        ]
+                        for item in reverse_domains
+                    ],
+                ),
+            )
+        )
     return sheets
 
 

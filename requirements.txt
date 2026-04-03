@@ -1,7 +1,6 @@
 # Core app and bundled tool dependencies.
 # This file intentionally includes the Python packages needed by:
 # - the SelectInfo app itself
-# - the MCP server
 # - the bundled OneForAll and dirsearch tool sources
 #
 # External binaries such as nmap and subfinder are not pip packages and
@@ -23,7 +22,6 @@ idna>=3.3
 Jinja2>=3.0.0
 loguru>=0.6.0
 MarkupSafe>=2.0.0
-mcp>=1.23.3,<2
 mysql-connector-python>=8.0.20
 ntlm-auth>=1.5.0
 openpyxl>=3.1.0

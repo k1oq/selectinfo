@@ -7,7 +7,7 @@
 **当前状态**
 
 - 交互式入口会先一次性确认所有扫描选项，再开始长任务。
-- 根目录 `requirements.txt` 是统一 Python 安装入口，覆盖主项目、MCP、内置 `OneForAll` 和 `dirsearch`。
+- 根目录 `requirements.txt` 是统一 Python 安装入口，覆盖主项目和内置 `OneForAll`、`dirsearch`。
 - 单次扫描结果新增 `tool_runs` 字段，用来记录每个子域名工具的执行状态、返回码和计数。
 - `runtime/` 仅存放运行时状态，不再作为需要跟踪的源码内容。
 
@@ -48,6 +48,8 @@ python scan.py example.com --port-scan --web-fingerprint
 python scan.py example.com --preset quick --port-scan
 python scan.py example.com --preset deep --port-scan --web-fingerprint --directory-scan
 python scan.py example.com --nmap-args "-sV -Pn"
+python scan.py 1.1.1.1 --port-scan --web-fingerprint
+python scan.py 1.1.1.1 --no-reverse-ip --port-scan
 python main.py
 ```
 
@@ -157,16 +159,14 @@ chmod +x tools/subfinder/subfinder
 
 支持三种入口：
 
-- `python scan.py <domain>`
-- `python scan.py <domain> --preset quick|standard|deep`
-- `python scan.py <domain> --nmap-args "-sV -Pn"`（仅本次运行生效，不会修改本地配置）
+- `python scan.py <domain-or-ip>`
+- `python scan.py <domain-or-ip> --preset quick|standard|deep`
+- `python scan.py <domain-or-ip> --nmap-args "-sV -Pn"`（仅本次运行生效，不会修改本地配置）
   - 闈炰氦浜掑紡鎵弿锛岄€傚悎浜虹被鐢ㄦ埛鐩存帴鎵ц鍗曠洰鏍囨垨鎵归噺浠诲姟
 - `python main.py`
   - 交互式扫描和工具配置，默认先选 `quick / standard / deep`
 - 直接编辑 `config/local_settings.json`
   - 适合修改本机工具路径、本机参数覆盖和排障
-- `python mcp_server.py`
-  - 通过 MCP 管理工具配置
 
 ### 参数档位
 
@@ -187,6 +187,8 @@ chmod +x tools/subfinder/subfinder
 
 ```bash
 python scan.py example.com --port-scan --web-fingerprint
+python scan.py 1.1.1.1 --port-scan --web-fingerprint
+python scan.py 1.1.1.1 --no-reverse-ip --port-scan
 python scan.py example.com --preset quick --port-scan
 python scan.py example.com --preset deep --port-scan --web-fingerprint --directory-scan
 python scan.py --targets-file domains.txt --port-scan --web-fingerprint --directory-scan
@@ -195,26 +197,6 @@ python scan.py example.com --subfinder-args "-rl 50"
 python tools/self_check.py
 # edit config/local_settings.json
 ```
-
-### MCP 服务
-
-启动方式：
-
-```bash
-python mcp_server.py
-```
-
-服务名：`selectinfo-tools`
-
-支持的配置能力包括：
-
-- 列出工具
-- 获取工具状态和参数
-- 设置工具路径
-- 修改工具参数
-- 重置工具参数
-- 执行工具自检
-- 导出配置快照
 
 <a id="output"></a>
 ## 输出结果
@@ -287,7 +269,6 @@ python -m unittest discover -s tests -p "test_*.py" -v
 python tools/self_check.py
 python -m unittest discover -s tests -p "test_*.py" -v
 python main.py
-python mcp_server.py
 ```
 
 <a id="faq"></a>

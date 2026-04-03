@@ -110,6 +110,96 @@ class ScanEntrypointTests(unittest.TestCase):
         self.assertTrue(call_kwargs["enable_port_scan"])
         self.assertTrue(call_kwargs["enable_web_fingerprint"])
 
+    def test_execute_ip_only_target_skips_subdomain_tool_selection(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": False,
+            "oneforall": False,
+        }
+        fake_scanner.domain_extractor.is_ip_target.return_value = True
+
+        args = Namespace(
+            target="1.1.1.1",
+            targets_file=None,
+            tools=None,
+            preset="standard",
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args=None,
+            dirsearch_args=None,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=True,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan.NmapSetupManager, "is_available", return_value=True
+        ), mock.patch.object(
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
+        ) as run_single_scan, mock.patch.object(
+            scan, "select_tools"
+        ) as select_tools:
+            result = scan.execute(args)
+
+        self.assertEqual(result["saved_path"], Path("result.json"))
+        select_tools.assert_not_called()
+        self.assertEqual(run_single_scan.call_args.kwargs["tools"], [])
+        self.assertTrue(run_single_scan.call_args.kwargs["enable_reverse_ip"])
+
+    def test_execute_ip_only_target_can_disable_reverse_ip(self):
+        fake_scanner = mock.Mock()
+        fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
+        fake_scanner.check_tools.return_value = {
+            "subfinder": False,
+            "oneforall": False,
+        }
+        fake_scanner.domain_extractor.is_ip_target.return_value = True
+
+        args = Namespace(
+            target="1.1.1.1",
+            targets_file=None,
+            tools=None,
+            preset="standard",
+            subfinder_args=None,
+            oneforall_args=None,
+            nmap_args=None,
+            dirsearch_args=None,
+            reverse_ip=False,
+            skip_wildcard=False,
+            skip_validation=False,
+            serial=False,
+            port_scan=True,
+            port_mode="common",
+            web_fingerprint=False,
+            directory_scan=False,
+            results_dir=None,
+            output=None,
+            summary_output=None,
+            background=False,
+        )
+
+        with mock.patch.object(scan, "SubdomainScanner", return_value=fake_scanner), mock.patch.object(
+            scan, "print_plan"
+        ), mock.patch.object(
+            scan.NmapSetupManager, "is_available", return_value=True
+        ), mock.patch.object(
+            scan, "run_single_scan", return_value={"saved_path": Path("result.json"), "report_path": Path("result.summary.xlsx")}
+        ) as run_single_scan:
+            scan.execute(args)
+
+        self.assertFalse(run_single_scan.call_args.kwargs["enable_reverse_ip"])
+
     def test_execute_preset_applies_runtime_overrides_without_enabling_stages(self):
         fake_scanner = mock.Mock()
         fake_scanner.AVAILABLE_TOOLS = {"subfinder": object(), "oneforall": object()}
@@ -511,6 +601,7 @@ class ScanEntrypointTests(unittest.TestCase):
                 skip_wildcard=False,
                 skip_validation=False,
                 parallel=True,
+                enable_reverse_ip=False,
                 enable_port_scan=False,
                 port_mode="common",
                 enable_web_fingerprint=False,
@@ -552,6 +643,7 @@ class ScanEntrypointTests(unittest.TestCase):
                     skip_wildcard=False,
                     skip_validation=False,
                     parallel=True,
+                    enable_reverse_ip=False,
                     enable_port_scan=True,
                     port_mode="common",
                     enable_web_fingerprint=True,
@@ -564,6 +656,73 @@ class ScanEntrypointTests(unittest.TestCase):
         self.assertEqual(result["report_path"], report_path)
         self.assertTrue(run_directory_scan.called)
         write_report.assert_called_once_with(output_path, output_path=str(report_path))
+
+    def test_run_single_scan_enriches_ip_targets_before_web_fingerprint(self):
+        class FakeScanner:
+            def __init__(self):
+                self.last_result = None
+
+            def scan(self, **kwargs):
+                self.last_result = {
+                    "target": "1.1.1.1",
+                    "target_type": "ip",
+                    "wildcard": {"detected": False},
+                    "statistics": {"total_found": 1, "valid_count": 1, "filtered_count": 0, "total_unique": 1},
+                    "subdomains": [{"subdomain": "1.1.1.1", "ip": ["1.1.1.1"], "alive_verified": True}],
+                }
+                return self.last_result
+
+            def save_result(self, output_path=None):
+                destination = Path(output_path)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text("{}", encoding="utf-8")
+                return destination
+
+        reverse_result = {
+            "target_ip": "1.1.1.1",
+            "domains": [
+                {
+                    "domain": "reverse.example.com",
+                    "sources": ["ptr", "tls_cert"],
+                    "ports": [443],
+                    "resolved_ips": ["1.1.1.1"],
+                    "matches_target": True,
+                    "confidence": "high",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "ip.json"
+            report_path = Path(tmp) / "ip.summary.xlsx"
+
+            with mock.patch.object(scan, "run_port_scan", return_value={"1.1.1.1": [443]}), mock.patch.object(
+                scan, "run_reverse_ip", return_value=reverse_result
+            ) as run_reverse_ip, mock.patch.object(
+                scan, "run_web_fingerprint", return_value={"targets": []}
+            ) as run_web_fingerprint, mock.patch.object(
+                scan, "write_single_scan_report_from_file", return_value=report_path
+            ):
+                result = scan.run_single_scan(
+                    FakeScanner(),
+                    target="1.1.1.1",
+                    tools=[],
+                    skip_wildcard=False,
+                    skip_validation=False,
+                    parallel=False,
+                    enable_reverse_ip=True,
+                    enable_port_scan=True,
+                    port_mode="common",
+                    enable_web_fingerprint=True,
+                    enable_directory_scan=False,
+                    output_path=str(output_path),
+                )
+
+        self.assertEqual(result["saved_path"], output_path)
+        run_reverse_ip.assert_called_once_with("1.1.1.1", open_ports=[443], output_path=output_path)
+        fingerprint_subdomains = run_web_fingerprint.call_args.args[0]
+        self.assertTrue(any(item["subdomain"] == "reverse.example.com" for item in fingerprint_subdomains))
+        self.assertEqual(run_web_fingerprint.call_args.args[1], {"1.1.1.1": [443]})
 
     def test_run_batch_scan_writes_reports(self):
         fake_batch_summary = {
@@ -588,6 +747,7 @@ class ScanEntrypointTests(unittest.TestCase):
                 skip_wildcard=False,
                 skip_validation=False,
                 parallel=True,
+                enable_reverse_ip=False,
                 enable_port_scan=False,
                 port_mode="common",
                 enable_web_fingerprint=False,

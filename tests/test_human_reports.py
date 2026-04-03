@@ -207,5 +207,38 @@ class HumanReportsTests(unittest.TestCase):
                 workbook.close()
 
 
+    def test_single_scan_report_includes_reverse_ip_section_when_present(self):
+        result = self._sample_single_result()
+        result["reverse_ip"] = {
+            "domains": [
+                {
+                    "domain": "reverse.example.com",
+                    "sources": ["ptr", "tls_cert"],
+                    "ports": [443],
+                    "resolved_ips": ["1.1.1.1"],
+                    "matches_target": True,
+                    "confidence": "high",
+                }
+            ]
+        }
+
+        report = build_single_scan_report(
+            result,
+            source_path=Path(PROJECT_ROOT) / "results" / "ip.json",
+        )
+
+        rows = list(csv.DictReader(StringIO(report)))
+        self.assertTrue(any(row["分组"] == "IP反查" and row["名称"] == "reverse.example.com" for row in rows))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = write_single_scan_report(result, source_path=Path(tmp) / "ip.json")
+            workbook = load_workbook(output_path)
+            try:
+                self.assertIn("IP反查", workbook.sheetnames)
+                self.assertEqual(workbook["IP反查"]["A2"].value, "reverse.example.com")
+            finally:
+                workbook.close()
+
+
 if __name__ == "__main__":
     unittest.main()

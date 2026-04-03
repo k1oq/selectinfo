@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from _bootstrap import PROJECT_ROOT  # noqa: F401
 import config
@@ -194,6 +196,76 @@ class BatchScanRunnerTests(unittest.TestCase):
         self.assertTrue(scanner.calls[0]["skip_wildcard"])
         self.assertTrue(scanner.calls[0]["skip_validation"])
         self.assertFalse(scanner.calls[0]["parallel"])
+
+    def test_run_enriches_ip_targets_before_web_fingerprint(self):
+        class FakeScanner:
+            def __init__(self, result_dir: Path):
+                self.result_dir = result_dir
+                self.current_result = None
+
+            def scan(self, **kwargs):
+                self.current_result = {
+                    "target": "1.1.1.1",
+                    "target_type": "ip",
+                    "subdomains": [{"subdomain": "1.1.1.1", "ip": ["1.1.1.1"], "alive_verified": True}],
+                    "wildcard": {"detected": False},
+                    "statistics": {"total_found": 1, "valid_count": 1, "total_unique": 1},
+                    "tool_runs": {},
+                }
+                return self.current_result
+
+            def save_result(self):
+                output_path = self.result_dir / "single.json"
+                output_path.write_text("{}", encoding="utf-8")
+                return output_path
+
+        reverse_result = {
+            "domains": [
+                {
+                    "domain": "reverse.example.com",
+                    "sources": ["ptr"],
+                    "ports": [443],
+                    "resolved_ips": ["1.1.1.1"],
+                    "matches_target": True,
+                    "confidence": "medium",
+                }
+            ]
+        }
+
+        with TemporaryDirectory() as tmp:
+            result_dir = Path(tmp)
+            scanner = FakeScanner(result_dir)
+            runner = BatchScanRunner(
+                scanner=scanner,
+                run_port_scan=lambda *_args, **_kwargs: {"1.1.1.1": [443]},
+                run_reverse_ip=lambda *_args, **_kwargs: reverse_result,
+                run_web_fingerprint=lambda subdomains, *_args, **_kwargs: {
+                    "targets": [{"subdomain": item["subdomain"]} for item in subdomains]
+                },
+                run_directory_scan=lambda *_args, **_kwargs: {},
+            )
+
+            original_results_dir = config.RESULTS_DIR
+            config.RESULTS_DIR = result_dir
+            try:
+                summary, summary_path = runner.run(
+                    domains=["1.1.1.1"],
+                    tools=[],
+                    enable_reverse_ip=True,
+                    enable_port_scan=True,
+                    port_scan_mode="common",
+                    enable_web_fingerprint=True,
+                    enable_directory_scan=False,
+                )
+                self.assertTrue(summary_path.exists())
+            finally:
+                config.RESULTS_DIR = original_results_dir
+
+        item = summary["items"][0]
+        self.assertEqual(item["status"], "success")
+        self.assertEqual(item["port_scan_status"], "completed")
+        self.assertEqual(item["web_fingerprint_status"], "completed")
+        self.assertEqual(item["web_target_count"], 2)
 
 
 if __name__ == "__main__":

@@ -12,9 +12,10 @@ from typing import Dict, List, Optional
 from rich.table import Table
 
 import config
+from tools import OneForAllTool, SubfinderTool, ToolManager
 from utils import atomic_write_json
 from utils.logger import console, get_logger
-from tools import BaseTool, OneForAllTool, SubfinderTool, ToolManager
+
 from .domain_extractor import DomainExtractor
 from .result_merger import ResultMerger
 from .subdomain_validator import SubdomainValidator
@@ -53,8 +54,22 @@ class SubdomainScanner:
         parallel: bool = True,
     ) -> Dict:
         start_time = datetime.now()
-        domain = self.domain_extractor.extract(target)
-        logger.info(f"[bold]目标域名: {domain}[/bold]")
+        normalized_target = self.domain_extractor.extract(target)
+        is_ip_target = self.domain_extractor.is_ip_target(target)
+        logger.info(
+            f"[bold]目标{'IP' if is_ip_target else '域名'}: {normalized_target}[/bold]"
+        )
+
+        self.result_merger.clear()
+        if is_ip_target:
+            duration = (datetime.now() - start_time).total_seconds()
+            self._scan_result = self._build_ip_result(
+                target=normalized_target,
+                start_time=start_time,
+                duration=duration,
+            )
+            self._print_summary()
+            return self._scan_result
 
         if tools is None:
             tools_to_use = [t for t in self.tool_manager.get_all_tools() if t.is_installed()]
@@ -75,15 +90,15 @@ class SubdomainScanner:
 
         wildcard_detector = None
         if not skip_wildcard:
-            wildcard_detector = WildcardDetector(domain)
+            wildcard_detector = WildcardDetector(normalized_target)
             wildcard_detector.detect()
 
-        self.result_merger.clear()
         tool_runs: dict[str, dict] = {}
-
         if parallel and len(tools_to_use) > 1:
             with ThreadPoolExecutor(max_workers=len(tools_to_use)) as executor:
-                futures = {executor.submit(tool.scan, domain): tool for tool in tools_to_use}
+                futures = {
+                    executor.submit(tool.scan, normalized_target): tool for tool in tools_to_use
+                }
                 for future in as_completed(futures):
                     tool = futures[future]
                     try:
@@ -98,7 +113,7 @@ class SubdomainScanner:
         else:
             for tool in tools_to_use:
                 try:
-                    subdomains = tool.scan(domain)
+                    subdomains = tool.scan(normalized_target)
                 except Exception as exc:
                     message = f"{tool.name} 扫描失败: {exc}"
                     logger.error(message)
@@ -121,11 +136,10 @@ class SubdomainScanner:
             ]
             filtered_count = 0
 
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-
+        duration = (datetime.now() - start_time).total_seconds()
         self._scan_result = {
-            "target": domain,
+            "target": normalized_target,
+            "target_type": "domain",
             "scan_time": start_time.isoformat(),
             "duration_seconds": round(duration, 2),
             "tools_used": [t.name for t in tools_to_use],
@@ -146,6 +160,41 @@ class SubdomainScanner:
         self._print_summary()
         return self._scan_result
 
+    def _build_ip_result(self, target: str, start_time: datetime, duration: float) -> Dict:
+        return {
+            "target": target,
+            "target_type": "ip",
+            "scan_time": start_time.isoformat(),
+            "duration_seconds": round(duration, 2),
+            "tools_used": [],
+            "tool_runs": {},
+            "wildcard": {
+                "detected": False,
+                "ips": [],
+            },
+            "statistics": {
+                "total_found": 1,
+                "valid_count": 1,
+                "filtered_count": 0,
+                "by_tool": {},
+                "total_raw": 0,
+                "total_unique": 1,
+                "duplicates_removed": 0,
+            },
+            "subdomains": [
+                {
+                    "subdomain": target,
+                    "ip": [target],
+                    "alive_verified": True,
+                }
+            ],
+        }
+
+    @staticmethod
+    def _sanitize_result_filename(target: str) -> str:
+        safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in target)
+        return safe.strip("._") or "scan_target"
+
     def _print_summary(self):
         if not self._scan_result:
             return
@@ -157,9 +206,9 @@ class SubdomainScanner:
         table.add_column("项目", style="cyan")
         table.add_column("值")
 
-        table.add_row("目标域名", self._scan_result["target"])
+        table.add_row("目标", self._scan_result["target"])
         table.add_row("扫描耗时", f"{self._scan_result['duration_seconds']} 秒")
-        table.add_row("使用工具", ", ".join(self._scan_result["tools_used"]))
+        table.add_row("使用工具", ", ".join(self._scan_result["tools_used"]) or "IP 直扫")
         if self._scan_result["wildcard"]["detected"]:
             table.add_row(
                 "泛解析",
@@ -167,8 +216,11 @@ class SubdomainScanner:
             )
         else:
             table.add_row("泛解析", "[green]否[/green]")
-        table.add_row("发现子域名", str(self._scan_result["statistics"]["total_found"]))
-        table.add_row("有效子域名", f"[green]{self._scan_result['statistics']['valid_count']}[/green]")
+        table.add_row("发现目标数", str(self._scan_result["statistics"]["total_found"]))
+        table.add_row(
+            "有效目标数",
+            f"[green]{self._scan_result['statistics']['valid_count']}[/green]",
+        )
         table.add_row("过滤数量", str(self._scan_result["statistics"]["filtered_count"]))
 
         console.print(table)
@@ -181,7 +233,8 @@ class SubdomainScanner:
         if output_path is None:
             config.ensure_dirs()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = config.RESULTS_DIR / f"{self._scan_result['target']}_{timestamp}.json"
+            safe_target = self._sanitize_result_filename(self._scan_result["target"])
+            output_path = config.RESULTS_DIR / f"{safe_target}_{timestamp}.json"
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)

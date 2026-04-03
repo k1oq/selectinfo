@@ -65,6 +65,7 @@ def _require_section(data: dict, key: str) -> dict:
 
 _SETTINGS = _load_settings_file()
 _DNS = _require_section(_SETTINGS, "dns")
+_REVERSE_IP = _require_section(_SETTINGS, "reverse_ip")
 _PORT_SCAN = _require_section(_SETTINGS, "port_scan")
 _WEB_FINGERPRINT = _require_section(_SETTINGS, "web_fingerprint")
 _DIRSEARCH = _require_section(_SETTINGS, "dirsearch")
@@ -76,6 +77,8 @@ _TOOL_DEFAULTS = _require_section(_SETTINGS, "tool_defaults")
 DNS_TIMEOUT = int(_DNS["timeout"])
 DNS_THREADS = int(_DNS["threads"])
 WILDCARD_TEST_COUNT = int(_DNS["wildcard_test_count"])
+REVERSE_IP_TIMEOUT = int(_REVERSE_IP["timeout"])
+REVERSE_IP_TLS_PORTS = [int(item) for item in _REVERSE_IP.get("common_tls_ports", [443, 8443, 9443])]
 
 PORT_SCAN_THREADS = int(_PORT_SCAN["threads"])
 # Total timeout for one nmap subprocess, not a per-port timeout.

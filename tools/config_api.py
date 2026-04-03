@@ -1,5 +1,5 @@
 """
-Unified tool configuration API shared by MCP and interactive menus.
+Unified tool configuration API shared by CLI and interactive menus.
 """
 
 from __future__ import annotations

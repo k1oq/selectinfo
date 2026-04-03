@@ -1,89 +1,97 @@
 """
-主域名提取模块
-从用户输入中提取主域名
+Target normalization helpers.
 """
-import tldextract
+
+from __future__ import annotations
+
+import ipaddress
 from urllib.parse import urlparse
+
+import tldextract
 
 
 class DomainExtractor:
-    """主域名提取器"""
-    
+    """Normalize domains, URLs, and direct IP targets."""
+
+    @staticmethod
+    def _extract_hostname(input_str: str) -> str:
+        raw = input_str.strip()
+        if not raw:
+            return ""
+
+        if "://" in raw:
+            try:
+                parsed = urlparse(raw)
+                return (parsed.hostname or parsed.path.split("/")[0]).strip()
+            except Exception:
+                return raw
+
+        host = raw.split("/", 1)[0].strip()
+        if host.startswith("[") and "]" in host:
+            return host[1 : host.index("]")]
+
+        if DomainExtractor.is_ip_address(host):
+            return host
+
+        if host.count(":") == 1:
+            candidate, port = host.rsplit(":", 1)
+            if port.isdigit():
+                return candidate
+
+        return host
+
+    @staticmethod
+    def is_ip_address(value: str) -> bool:
+        try:
+            ipaddress.ip_address(value.strip())
+            return True
+        except ValueError:
+            return False
+
+    @staticmethod
+    def is_ip_target(input_str: str) -> bool:
+        return DomainExtractor.is_ip_address(DomainExtractor._extract_hostname(input_str))
+
     @staticmethod
     def extract(input_str: str) -> str:
-        """
-        从输入中提取主域名
-        
-        支持的输入格式:
-        - https://www.example.com/path
-        - http://sub.example.com
-        - www.example.com
-        - sub.example.com
-        - example.com
-        
-        Args:
-            input_str: 用户输入的域名或URL
-            
-        Returns:
-            主域名，如 example.com
-        """
-        # 清理输入
-        input_str = input_str.strip()
-        
-        # 如果没有协议，添加一个以便解析
-        if not input_str.startswith(('http://', 'https://')):
-            input_str = 'http://' + input_str
-        
-        # 解析URL获取主机部分
-        try:
-            parsed = urlparse(input_str)
-            hostname = parsed.hostname or parsed.path.split('/')[0]
-        except Exception:
-            hostname = input_str
-        
-        # 使用 tldextract 提取主域名
+        hostname = DomainExtractor._extract_hostname(input_str)
+        if DomainExtractor.is_ip_address(hostname):
+            return hostname
+
         extracted = tldextract.extract(hostname)
-        
         if extracted.domain and extracted.suffix:
             return f"{extracted.domain}.{extracted.suffix}"
-        
-        # 如果提取失败，返回原始主机名
         return hostname
-    
+
     @staticmethod
     def extract_full(input_str: str) -> dict:
-        """
-        提取完整的域名信息
-        
-        Args:
-            input_str: 用户输入的域名或URL
-            
-        Returns:
-            包含 subdomain, domain, suffix, registered_domain 的字典
-        """
-        input_str = input_str.strip()
-        
-        if not input_str.startswith(('http://', 'https://')):
-            input_str = 'http://' + input_str
-        
-        try:
-            parsed = urlparse(input_str)
-            hostname = parsed.hostname or parsed.path.split('/')[0]
-        except Exception:
-            hostname = input_str
-        
+        hostname = DomainExtractor._extract_hostname(input_str)
+        if DomainExtractor.is_ip_address(hostname):
+            return {
+                "host": hostname,
+                "is_ip": True,
+                "subdomain": "",
+                "domain": hostname,
+                "suffix": "",
+                "registered_domain": hostname,
+            }
+
         extracted = tldextract.extract(hostname)
-        
         return {
+            "host": hostname,
+            "is_ip": False,
             "subdomain": extracted.subdomain,
             "domain": extracted.domain,
             "suffix": extracted.suffix,
-            "registered_domain": f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else hostname,
+            "registered_domain": (
+                f"{extracted.domain}.{extracted.suffix}"
+                if extracted.domain and extracted.suffix
+                else hostname
+            ),
         }
 
 
 if __name__ == "__main__":
-    # 测试
     test_cases = [
         "https://www.example.com/path",
         "http://api.sub.example.com",
@@ -91,8 +99,9 @@ if __name__ == "__main__":
         "sub.example.com",
         "example.com",
         "https://example.co.uk/test",
+        "1.1.1.1",
     ]
-    
+
     extractor = DomainExtractor()
     for case in test_cases:
         result = extractor.extract(case)

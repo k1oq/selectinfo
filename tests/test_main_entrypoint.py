@@ -35,6 +35,46 @@ class MainEntrypointTests(unittest.TestCase):
         self.assertNotIn("--skip-validation", command)
         self.assertNotIn("--serial", command)
 
+    def test_background_command_includes_reverse_ip_flag_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            plan = main.ScanExecutionPlan(
+                targets=["1.1.1.1"],
+                tools=[],
+                preset="standard",
+                enable_reverse_ip=True,
+            )
+            job = {
+                "job_id": "scan_123",
+                "job_dir": job_dir,
+                "status_path": job_dir / "status.json",
+                "log_path": job_dir / "scan.log",
+            }
+
+            command = main._build_background_scan_command(plan, job)
+
+        self.assertIn("--reverse-ip", command)
+
+    def test_background_command_includes_no_reverse_ip_flag_for_ip_targets_when_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job_dir = Path(tmp)
+            plan = main.ScanExecutionPlan(
+                targets=["1.1.1.1"],
+                tools=[],
+                preset="standard",
+                enable_reverse_ip=False,
+            )
+            job = {
+                "job_id": "scan_123",
+                "job_dir": job_dir,
+                "status_path": job_dir / "status.json",
+                "log_path": job_dir / "scan.log",
+            }
+
+            command = main._build_background_scan_command(plan, job)
+
+        self.assertIn("--no-reverse-ip", command)
+
 
 if __name__ == "__main__":
     unittest.main()

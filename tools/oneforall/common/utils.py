@@ -573,7 +573,16 @@ def check_version(local):
 def get_main_domain(domain):
     if not isinstance(domain, str):
         return None
-    return Domain(domain).registered()
+    domain_obj = Domain(domain)
+    registered = domain_obj.registered()
+    if registered:
+        return registered
+
+    # Fall back to the matched host when extraction returns an empty registered domain.
+    matched = domain_obj.match()
+    if matched:
+        return matched.lower()
+    return None
 
 
 def call_massdns(massdns_path, dict_path, ns_path, output_path, log_path,

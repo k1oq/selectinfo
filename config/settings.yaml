@@ -6,6 +6,13 @@ dns:
   threads: 50
   wildcard_test_count: 3
 
+reverse_ip:
+  timeout: 5
+  common_tls_ports:
+    - 443
+    - 8443
+    - 9443
+
 port_scan:
   threads: 200
   timeout: 600.0

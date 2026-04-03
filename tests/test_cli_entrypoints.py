@@ -32,16 +32,6 @@ class EntrypointTests(unittest.TestCase):
         self.assertNotIn("--skip-validation", result.stdout)
         self.assertNotIn("--serial", result.stdout)
 
-    def test_root_mcp_server_imports(self):
-        result = self._run("-B", "-c", "import mcp_server; print(mcp_server.mcp.name)")
-        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
-        self.assertIn("selectinfo-tools", result.stdout)
-
-    def test_tools_mcp_shim_imports(self):
-        result = self._run("-B", "-c", "import tools.mcp_server as m; print(m.mcp.name)")
-        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
-        self.assertIn("selectinfo-tools", result.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()
