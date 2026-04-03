@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interactive entrypoint for SelectInfo.
+SelectInfo 交互式入口。
 """
 
 from __future__ import annotations
@@ -48,8 +48,8 @@ def print_banner():
     console.print()
     console.print(
         Panel.fit(
-            "[bold blue]SelectInfo[/bold blue] - interactive scanner\n"
-            "[dim]Subdomains | Ports | Web fingerprint | Directory scan[/dim]",
+            "[bold blue]SelectInfo[/bold blue] - 信息收集工具\n"
+            "[dim]子域名收集 | 端口扫描 | Web 指纹识别 | Web 目录扫描[/dim]",
             subtitle=f"v{__version__}",
         )
     )
@@ -65,20 +65,20 @@ def show_tool_status(_scanner: SubdomainScanner) -> dict[str, bool]:
     check_results = checker.run_all()
     tool_status = {name: result.usable for name, result in check_results.items()}
 
-    table = Table(title="Tool Status", show_header=True)
-    table.add_column("Tool")
-    table.add_column("Status")
-    table.add_column("Version")
-    table.add_column("Path", overflow="fold")
-    table.add_column("Message", overflow="fold")
+    table = Table(title="工具状态", show_header=True)
+    table.add_column("工具")
+    table.add_column("状态")
+    table.add_column("版本")
+    table.add_column("路径", overflow="fold")
+    table.add_column("说明", overflow="fold")
 
     for name, result in check_results.items():
         if result.usable:
-            status = "[green]usable[/green]"
+            status = "[green]可用[/green]"
         elif result.installed:
-            status = "[yellow]installed but unusable[/yellow]"
+            status = "[yellow]已安装但不可用[/yellow]"
         else:
-            status = "[red]missing[/red]"
+            status = "[red]未安装[/red]"
 
         table.add_row(
             name,
@@ -89,7 +89,7 @@ def show_tool_status(_scanner: SubdomainScanner) -> dict[str, bool]:
         )
 
     console.print(table)
-    console.print("[dim]dirsearch is optional and only used for directory scanning.[/dim]")
+    console.print("[dim]提示: dirsearch 是可选工具，仅用于 Web 目录扫描。[/dim]")
     console.print()
     return tool_status
 
@@ -107,32 +107,32 @@ def prompt_tool_setup(scanner: SubdomainScanner, tool_name: str) -> bool:
     if target is None:
         return False
 
-    console.print(f"[bold yellow]{tool_name} is not ready[/bold yellow]")
-    console.print(f"Expected location: {target.get_expected_location()}")
-    console.print("  [1] Configure local path")
+    console.print(f"[bold yellow]{tool_name} 未就绪[/bold yellow]")
+    console.print(f"默认位置: {target.get_expected_location()}")
+    console.print("  [1] 输入本地路径")
     if target.supports_download():
-        console.print("  [2] Download automatically")
-        console.print("  [3] Skip")
+        console.print("  [2] 自动下载到默认目录")
+        console.print("  [3] 跳过")
         valid_choices = ["1", "2", "3"]
         skip_choice = "3"
     else:
-        console.print("  [2] Skip")
+        console.print("  [2] 跳过")
         valid_choices = ["1", "2"]
         skip_choice = "2"
 
-    choice = Prompt.ask("Choose an action", choices=valid_choices, default=skip_choice)
+    choice = Prompt.ask("请选择处理方式", choices=valid_choices, default=skip_choice)
     if choice == "1":
-        path = Prompt.ask("Tool path").strip()
+        path = Prompt.ask("请输入工具路径").strip()
         if not path:
-            console.print("[yellow]No path provided, skipping.[/yellow]")
+            console.print("[yellow]未输入路径，跳过[/yellow]")
             return False
         return target.configure_path(path)
 
     if choice == "2" and target.supports_download():
-        console.print(f"[cyan]Downloading {tool_name}...[/cyan]")
+        console.print(f"[cyan]正在下载 {tool_name}...[/cyan]")
         return target.download()
 
-    console.print(f"[yellow]Skipped {tool_name} setup.[/yellow]")
+    console.print(f"[yellow]跳过 {tool_name} 配置[/yellow]")
     return False
 
 
@@ -142,11 +142,11 @@ def ensure_tool_setup(scanner: SubdomainScanner) -> dict[str, bool]:
     if not missing_required:
         return tool_status
 
-    console.print("[yellow]Some required tools are not ready:[/yellow]")
+    console.print("[yellow]检测到以下核心工具未就绪:[/yellow]")
     console.print(f"  {', '.join(missing_required)}")
     console.print()
 
-    if not Confirm.ask("Configure them now?", default=True):
+    if not Confirm.ask("是否现在配置这些工具？", default=True):
         return tool_status
 
     for tool_name in missing_required:
@@ -154,7 +154,7 @@ def ensure_tool_setup(scanner: SubdomainScanner) -> dict[str, bool]:
         prompt_tool_setup(scanner, tool_name)
 
     console.print()
-    console.print("[cyan]Refreshing tool status...[/cyan]")
+    console.print("[cyan]工具状态已刷新[/cyan]")
     return show_tool_status(scanner)
 
 
@@ -162,18 +162,18 @@ def manage_tools_menu():
     api = ToolConfigAPI()
 
     while True:
-        console.print("\n[bold cyan]Tool Config[/bold cyan]")
-        console.print("[dim]Tip: you can also edit config/local_settings.json directly.[/dim]")
-        console.print("  [1] Show all tools")
-        console.print("  [2] Show one tool")
-        console.print("  [3] Configure tool path")
-        console.print("  [4] Update tool settings")
-        console.print("  [5] Reset tool settings")
-        console.print("  [6] Download tool")
-        console.print("  [0] Back")
+        console.print("\n[bold cyan]工具配置[/bold cyan]")
+        console.print("[dim]推荐做法: 直接编辑 config/local_settings.json，或运行 python tools/self_check.py[/dim]")
+        console.print("  [1] 查看所有工具状态")
+        console.print("  [2] 查看单个工具详情")
+        console.print("  [3] 配置工具路径")
+        console.print("  [4] 修改工具参数")
+        console.print("  [5] 重置工具参数")
+        console.print("  [6] 自动下载工具")
+        console.print("  [0] 返回主菜单")
         console.print()
 
-        choice = Prompt.ask("Choose", choices=["0", "1", "2", "3", "4", "5", "6"], default="1")
+        choice = Prompt.ask("请选择", choices=["0", "1", "2", "3", "4", "5", "6"], default="1")
         if choice == "0":
             return
 
@@ -181,25 +181,25 @@ def manage_tools_menu():
             console.print_json(json.dumps(api.get_all_tools_info(), ensure_ascii=False))
             continue
 
-        tool_name = Prompt.ask("Tool name", choices=api.list_tools())
+        tool_name = Prompt.ask("请输入工具名", choices=api.list_tools())
 
         if choice == "2":
             console.print_json(json.dumps(api.get_tool_info(tool_name), ensure_ascii=False))
         elif choice == "3":
-            path = Prompt.ask("Tool path").strip()
+            path = Prompt.ask("请输入工具路径").strip()
             console.print_json(json.dumps(api.configure_tool_path(tool_name, path), ensure_ascii=False))
         elif choice == "4":
-            console.print('Enter JSON settings, for example: {"timeout": 120}')
-            raw = Prompt.ask("Settings JSON").strip()
+            console.print('请输入 JSON 参数，例如: {"timeout": 120}')
+            raw = Prompt.ask("参数 JSON").strip()
             try:
                 values = json.loads(raw)
             except json.JSONDecodeError as exc:
-                console.print(f"[red]Invalid JSON: {exc}[/red]")
+                console.print(f"[red]JSON 格式错误: {exc}[/red]")
                 continue
             try:
                 console.print_json(json.dumps(api.update_tool_settings(tool_name, values), ensure_ascii=False))
             except Exception as exc:
-                console.print(f"[red]Update failed: {exc}[/red]")
+                console.print(f"[red]更新失败: {exc}[/red]")
         elif choice == "5":
             console.print_json(json.dumps(api.reset_tool_settings(tool_name), ensure_ascii=False))
         elif choice == "6":
@@ -207,7 +207,7 @@ def manage_tools_menu():
 
 
 def prompt_targets_from_lines() -> list[str]:
-    console.print("\n[bold]Enter targets (domain/IP), one per line, or input a file path.[/bold]\n")
+    console.print("\n[bold]请输入目标（域名/IP，每行一个，空行结束），或直接输入文件路径[/bold]\n")
     first_line = Prompt.ask("").strip()
 
     targets: list[str] = []
@@ -218,9 +218,9 @@ def prompt_targets_from_lines() -> list[str]:
                 for line in Path(first_line).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
-            console.print(f"[green]Loaded {len(targets)} targets from file.[/green]")
+            console.print(f"[green]已从文件加载 {len(targets)} 个目标[/green]")
         except Exception as exc:
-            console.print(f"[red]Failed to read file: {exc}[/red]")
+            console.print(f"[red]读取文件失败: {exc}[/red]")
             return []
     else:
         if first_line:
@@ -235,15 +235,15 @@ def prompt_targets_from_lines() -> list[str]:
 
 
 def choose_scan_mode() -> str:
-    console.print("\n[bold cyan]Port Scan[/bold cyan]\n")
-    console.print("[bold]Choose a port preset:[/bold]")
+    console.print("\n[bold cyan]端口扫描[/bold cyan]\n")
+    console.print("[bold]选择端口范围:[/bold]")
 
     presets = list(config.PORT_PRESETS.items())
     for index, (_, info) in enumerate(presets, 1):
         console.print(f"  [{index}] {info['name']}")
 
     console.print()
-    choice = Prompt.ask("Choose", default="1")
+    choice = Prompt.ask("请选择", default="1")
     try:
         index = int(choice) - 1
         if 0 <= index < len(presets):
@@ -254,16 +254,16 @@ def choose_scan_mode() -> str:
 
 
 def choose_scan_preset() -> str:
-    console.print("\n[bold cyan]Scan Preset[/bold cyan]\n")
+    console.print("\n[bold cyan]扫描档位[/bold cyan]\n")
     preset_names = config.list_scan_presets()
     for index, preset_name in enumerate(preset_names, 1):
         summary = config.summarize_scan_preset(preset_name)
-        default_suffix = " [dim](default)[/dim]" if preset_name == config.SCAN_PRESET_DEFAULT else ""
+        default_suffix = " [dim](默认)[/dim]" if preset_name == config.SCAN_PRESET_DEFAULT else ""
         console.print(f"  [{index}] {preset_name}{default_suffix}")
         console.print(f"      [dim]{summary}[/dim]")
 
     console.print()
-    choice = Prompt.ask("Choose", default=str(preset_names.index(config.SCAN_PRESET_DEFAULT) + 1))
+    choice = Prompt.ask("请选择", default=str(preset_names.index(config.SCAN_PRESET_DEFAULT) + 1))
     try:
         index = int(choice) - 1
         if 0 <= index < len(preset_names):
@@ -313,26 +313,26 @@ def build_scan_plan(
     enable_directory_scan = False
 
     if supports_reverse_ip:
-        enable_reverse_ip = Confirm.ask("Run reverse-IP enrichment for IP targets?", default=True)
+        enable_reverse_ip = Confirm.ask("检测到 IP 目标，是否启用 IP 反查补充域名线索？", default=True)
 
     if tool_status.get("nmap"):
         port_prompt = (
-            "Run port scan after subdomain discovery?"
+            "是否在子域名扫描后执行端口扫描？"
             if requires_subdomain_tools
-            else "Run port scan?"
+            else "是否执行端口扫描？"
         )
         enable_port_scan = Confirm.ask(port_prompt, default=default_enable_port_scan)
         if enable_port_scan:
             port_scan_mode = choose_scan_mode()
-            enable_web_fingerprint = Confirm.ask("Run web fingerprint after port scan?", default=False)
+            enable_web_fingerprint = Confirm.ask("是否在端口扫描后执行 Web 指纹识别？", default=False)
             if enable_web_fingerprint:
-                enable_directory_scan = Confirm.ask("Run directory scan after web fingerprint?", default=False)
+                enable_directory_scan = Confirm.ask("是否在 Web 指纹后执行 Web 目录扫描？", default=False)
                 if enable_directory_scan and not tool_status.get("dirsearch"):
-                    console.print("[yellow]dirsearch is unavailable, directory scan will be skipped.[/yellow]")
+                    console.print("[yellow]dirsearch 当前不可用，目录扫描运行时会被跳过。[/yellow]")
     else:
-        console.print("[yellow]nmap is unavailable, port/web follow-up stages will be skipped.[/yellow]")
+        console.print("[yellow]nmap 当前不可用，本次将跳过端口扫描、Web 指纹和目录扫描。[/yellow]")
 
-    background = Confirm.ask("Run in background?", default=False)
+    background = Confirm.ask("是否后台运行？日志和状态会写入 runtime/jobs", default=False)
     plan = ScanExecutionPlan(
         targets=targets,
         tools=selected_tools,
@@ -349,43 +349,43 @@ def build_scan_plan(
     )
 
     show_scan_plan(plan, tool_status)
-    if not Confirm.ask("Start with this plan?", default=True):
-        console.print("[yellow]Cancelled.[/yellow]")
+    if not Confirm.ask("按以上配置开始执行？", default=True):
+        console.print("[yellow]已取消[/yellow]")
         return None
     return plan
 
 
 def show_scan_plan(plan: ScanExecutionPlan, tool_status: dict[str, bool]):
-    table = Table(title="Execution Plan", show_header=False)
-    table.add_column("Item", style="cyan")
-    table.add_column("Config", overflow="fold")
+    table = Table(title="执行计划", show_header=False)
+    table.add_column("项目", style="cyan")
+    table.add_column("配置", overflow="fold")
 
     if len(plan.targets) == 1:
         target_summary = plan.targets[0]
     else:
         preview = ", ".join(plan.targets[:3])
-        suffix = f" ... total {len(plan.targets)}" if len(plan.targets) > 3 else ""
+        suffix = f" ... 共 {len(plan.targets)} 个" if len(plan.targets) > 3 else ""
         target_summary = preview + suffix
 
-    table.add_row("Targets", target_summary)
-    table.add_row("Preset", plan.preset if plan.tools else "N/A for direct IP scan")
+    table.add_row("目标", target_summary)
+    table.add_row("参数档位", plan.preset if plan.tools else "IP 直扫无需子域名档位")
     if plan.tools:
-        table.add_row("Preset Summary", config.summarize_scan_preset(plan.preset))
-    table.add_row("Subdomain Tools", ", ".join(plan.tools) if plan.tools else "Direct IP scan")
-    table.add_row("Wildcard Detection", "on")
-    table.add_row("DNS Validation", "on")
-    table.add_row("Parallel Tools", "on" if plan.parallel else ("off" if plan.tools else "n/a"))
-    table.add_row("Reverse IP", "on" if plan.enable_reverse_ip else "off")
-    table.add_row("Port Scan", "on" if plan.enable_port_scan else "off")
+        table.add_row("档位摘要", config.summarize_scan_preset(plan.preset))
+    table.add_row("子域名工具", ", ".join(plan.tools) if plan.tools else "IP 直扫")
+    table.add_row("泛解析检测", "默认开启")
+    table.add_row("DNS 存活验证", "默认开启")
+    table.add_row("子域名工具并行", "自动并行" if plan.parallel else ("单工具串行" if plan.tools else "不适用"))
+    table.add_row("IP 反查", "是" if plan.enable_reverse_ip else "否")
+    table.add_row("端口扫描", "是" if plan.enable_port_scan else "否")
     if plan.enable_port_scan and plan.port_scan_mode:
-        table.add_row("Port Mode", config.PORT_PRESETS[plan.port_scan_mode]["name"])
-    table.add_row("Web Fingerprint", "on" if plan.enable_web_fingerprint else "off")
+        table.add_row("端口范围", config.PORT_PRESETS[plan.port_scan_mode]["name"])
+    table.add_row("Web 指纹识别", "是" if plan.enable_web_fingerprint else "否")
     if plan.enable_directory_scan and not tool_status.get("dirsearch"):
-        directory_summary = "on (will be skipped because dirsearch is unavailable)"
+        directory_summary = "是（dirsearch 当前不可用，运行时会跳过）"
     else:
-        directory_summary = "on" if plan.enable_directory_scan else "off"
-    table.add_row("Directory Scan", directory_summary)
-    table.add_row("Background", "on" if plan.background else "off")
+        directory_summary = "是" if plan.enable_directory_scan else "否"
+    table.add_row("Web 目录扫描", directory_summary)
+    table.add_row("后台运行", "是" if plan.background else "否")
 
     console.print()
     console.print(table)
@@ -446,10 +446,10 @@ def show_scan_result(result: dict):
         return
 
     console.print()
-    console.print("[bold]Discovered targets (first 30):[/bold]")
+    console.print("[bold]发现的目标（前 30 个）:[/bold]")
 
     table = Table(show_header=True)
-    table.add_column("Subdomain", style="cyan")
+    table.add_column("子域名", style="cyan")
     table.add_column("IP")
 
     for item in subdomains[:30]:
@@ -457,20 +457,20 @@ def show_scan_result(result: dict):
 
     console.print(table)
     if len(subdomains) > 30:
-        console.print(f"[dim]... and {len(subdomains) - 30} more[/dim]")
+        console.print(f"[dim]... 还有 {len(subdomains) - 30} 个[/dim]")
 
 
 def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
-    target = Prompt.ask("\n[bold]Enter a target domain or IP[/bold]").strip()
+    target = Prompt.ask("\n[bold]请输入目标域名或 IP[/bold]").strip()
     if not target:
-        console.print("[red]Target cannot be empty.[/red]")
+        console.print("[red]目标不能为空[/red]")
         return
 
     available = get_available_subdomain_tools(scanner, tool_status)
     is_ip_target = scanner.domain_extractor.is_ip_target(target)
     requires_subdomain_tools = not is_ip_target
     if requires_subdomain_tools and not available:
-        console.print("[red]No subdomain tools are available. Configure subfinder or oneforall first.[/red]")
+        console.print("[red]没有可用的子域名工具，请先配置 subfinder 或 oneforall。[/red]")
         return
 
     plan = build_scan_plan(
@@ -486,10 +486,10 @@ def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
 
     if plan.background:
         launched = launch_background_plan(plan)
-        console.print(f"\n[green]Background job started: {launched['job_id']}[/green]")
+        console.print(f"\n[green]后台任务已启动: {launched['job_id']}[/green]")
         console.print(f"[green]PID: {launched['pid']}[/green]")
-        console.print(f"[green]Status: {launched['status_path']}[/green]")
-        console.print(f"[green]Log: {launched['log_path']}[/green]")
+        console.print(f"[green]状态文件: {launched['status_path']}[/green]")
+        console.print(f"[green]日志文件: {launched['log_path']}[/green]")
         return
 
     try:
@@ -509,25 +509,25 @@ def scan_single_domain(scanner: SubdomainScanner, tool_status: dict[str, bool]):
                 enable_directory_scan=plan.enable_directory_scan,
             )
         show_scan_result(scanner.get_result() or {})
-        console.print(f"\n[green]Saved result to: {result['saved_path']}[/green]")
-        console.print(f"[green]Saved report to: {result['report_path']}[/green]")
+        console.print(f"\n[green]结果已保存至: {result['saved_path']}[/green]")
+        console.print(f"[green]摘要已生成: {result['report_path']}[/green]")
     except KeyboardInterrupt:
-        console.print("\n[yellow]Scan cancelled.[/yellow]")
+        console.print("\n[yellow]扫描已取消[/yellow]")
     except Exception as exc:
-        console.print(f"[red]Scan failed: {exc}[/red]")
+        console.print(f"[red]扫描出错: {exc}[/red]")
 
 
 def scan_batch_domains(scanner: SubdomainScanner, tool_status: dict[str, bool]):
     targets = prompt_targets_from_lines()
     if not targets:
-        console.print("[red]No targets provided.[/red]")
+        console.print("[red]没有输入目标[/red]")
         return
 
     available = get_available_subdomain_tools(scanner, tool_status)
     ip_target_count = sum(1 for item in targets if scanner.domain_extractor.is_ip_target(item))
     requires_subdomain_tools = ip_target_count != len(targets)
     if requires_subdomain_tools and not available:
-        console.print("[red]Your batch includes domains, but no subdomain tools are available.[/red]")
+        console.print("[red]当前批量目标中包含域名，但没有可用的子域名工具。[/red]")
         return
 
     plan = build_scan_plan(
@@ -543,10 +543,10 @@ def scan_batch_domains(scanner: SubdomainScanner, tool_status: dict[str, bool]):
 
     if plan.background:
         launched = launch_background_plan(plan)
-        console.print(f"\n[green]Background job started: {launched['job_id']}[/green]")
+        console.print(f"\n[green]后台任务已启动: {launched['job_id']}[/green]")
         console.print(f"[green]PID: {launched['pid']}[/green]")
-        console.print(f"[green]Status: {launched['status_path']}[/green]")
-        console.print(f"[green]Log: {launched['log_path']}[/green]")
+        console.print(f"[green]状态文件: {launched['status_path']}[/green]")
+        console.print(f"[green]日志文件: {launched['log_path']}[/green]")
         return
 
     try:
@@ -566,12 +566,12 @@ def scan_batch_domains(scanner: SubdomainScanner, tool_status: dict[str, bool]):
                 enable_directory_scan=plan.enable_directory_scan,
             )
         BatchScanRunner.print_overview(result["batch_summary"], result["summary_path"])
-        console.print(f"[green]Saved report to: {result['report_path']}[/green]")
-        console.print(f"[dim]Results dir: {config.RESULTS_DIR}[/dim]")
+        console.print(f"[green]摘要已生成: {result['report_path']}[/green]")
+        console.print(f"[dim]结果保存在: {config.RESULTS_DIR}[/dim]")
     except KeyboardInterrupt:
-        console.print("\n[yellow]Scan cancelled.[/yellow]")
+        console.print("\n[yellow]扫描已取消[/yellow]")
     except Exception as exc:
-        console.print(f"[red]Scan failed: {exc}[/red]")
+        console.print(f"[red]扫描出错: {exc}[/red]")
 
 
 def main():
@@ -581,20 +581,20 @@ def main():
 
     available = get_available_subdomain_tools(scanner, tool_status)
     if not available:
-        console.print("[yellow]No subdomain tools are ready. You can still scan direct IP targets.[/yellow]")
+        console.print("[yellow]当前没有可用的子域名工具，你仍然可以直接扫描 IP 目标。[/yellow]")
         console.print(f"[dim]OneForAll: {config.ONEFORALL_DIR}[/dim]")
         console.print(f"[dim]Subfinder: {config.SUBFINDER_DIR}[/dim]")
         console.print(f"[dim]nmap: {NmapSetupManager.get_expected_location()}[/dim]")
         console.print(f"[dim]dirsearch: {config.DIRSEARCH_DIR}[/dim]")
         console.print()
 
-    console.print("[bold]Choose an action:[/bold]")
-    console.print("  [1] Single target scan")
-    console.print("  [2] Batch scan")
-    console.print("  [3] Tool config")
+    console.print("[bold]请选择功能:[/bold]")
+    console.print("  [1] 单目标扫描")
+    console.print("  [2] 批量扫描")
+    console.print("  [3] 工具配置")
     console.print()
 
-    choice = Prompt.ask("Choose", choices=["1", "2", "3"], default="1")
+    choice = Prompt.ask("请选择", choices=["1", "2", "3"], default="1")
     if choice == "1":
         scan_single_domain(scanner, tool_status)
     elif choice == "2":
@@ -602,12 +602,12 @@ def main():
     else:
         manage_tools_menu()
 
-    console.print("\n[cyan]Done[/cyan]\n")
+    console.print("\n[cyan]完成[/cyan]\n")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        console.print("\n[yellow]Exited.[/yellow]")
+        console.print("\n[yellow]已退出[/yellow]")
         sys.exit(0)

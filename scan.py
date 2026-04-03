@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Non-interactive scan entrypoint for human users.
+SelectInfo 非交互扫描入口。
 """
 
 from __future__ import annotations
@@ -44,43 +44,43 @@ from utils.logger import console
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="SelectInfo CLI for scanning domains or IPs.",
+        description="SelectInfo 非交互扫描入口，适合直接运行单目标或批量任务。",
     )
-    parser.add_argument("target", nargs="?", help="Single domain or IP target")
-    parser.add_argument("--targets-file", help="Batch target file, one domain/IP per line")
+    parser.add_argument("target", nargs="?", help="单个目标域名或 IP")
+    parser.add_argument("--targets-file", help="批量目标文件，每行一个域名或 IP")
     parser.add_argument("--tools", help=argparse.SUPPRESS)
     parser.add_argument(
         "--preset",
         choices=config.list_scan_presets(),
         default=config.SCAN_PRESET_DEFAULT,
-        help="Subdomain preset profile. Default: standard",
+        help="子域名扫描参数档位，默认 standard",
     )
-    parser.add_argument("--subfinder-args", help="Temporary Subfinder argument override")
-    parser.add_argument("--oneforall-args", help="Temporary OneForAll argument override")
+    parser.add_argument("--subfinder-args", help="本次运行临时覆盖 Subfinder 参数字符串")
+    parser.add_argument("--oneforall-args", help="本次运行临时覆盖 OneForAll 参数字符串")
     parser.add_argument("--skip-wildcard", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--skip-validation", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--serial", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--port-scan", action="store_true", help="Enable port scan stage")
-    parser.add_argument("--nmap-args", help="Temporary nmap argument override")
+    parser.add_argument("--port-scan", action="store_true", help="启用端口扫描")
+    parser.add_argument("--nmap-args", help="本次运行临时覆盖 nmap 参数字符串")
     parser.add_argument(
         "--port-mode",
         choices=sorted(config.PORT_PRESETS),
         default="common",
-        help="Port scan preset. Default: common",
+        help="端口扫描预设，默认 common",
     )
-    parser.add_argument("--web-fingerprint", action="store_true", help="Enable web fingerprint stage")
-    parser.add_argument("--directory-scan", action="store_true", help="Enable directory scan stage")
+    parser.add_argument("--web-fingerprint", action="store_true", help="启用 Web 指纹识别")
+    parser.add_argument("--directory-scan", action="store_true", help="启用 Web 目录扫描")
     parser.add_argument(
         "--reverse-ip",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Enable reverse-IP enrichment for direct IP targets (default: on for IP targets)",
+        help="是否对直接输入的 IP 启用反查补充线索（默认: IP 目标自动开启）",
     )
-    parser.add_argument("--dirsearch-args", help="Temporary dirsearch argument override")
-    parser.add_argument("--results-dir", help="Override default results directory")
-    parser.add_argument("--output", help="Explicit JSON output path for single-target mode")
-    parser.add_argument("--summary-output", help="Explicit summary report output path")
-    parser.add_argument("--background", action="store_true", help="Run in background")
+    parser.add_argument("--dirsearch-args", help="本次运行临时覆盖 dirsearch 参数字符串")
+    parser.add_argument("--results-dir", help="覆盖默认 results 目录")
+    parser.add_argument("--output", help="单目标模式下显式指定 JSON 结果路径")
+    parser.add_argument("--summary-output", help="显式指定摘要报告路径")
+    parser.add_argument("--background", action="store_true", help="后台运行，并将日志写入 runtime/jobs")
     parser.add_argument("--_background-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_job-id", help=argparse.SUPPRESS)
     parser.add_argument("--_status-file", help=argparse.SUPPRESS)
@@ -167,14 +167,14 @@ def resolve_requested_tools(
 
 def resolve_targets(target: str | None, targets_file: str | None) -> list[str]:
     if target and targets_file:
-        raise ValueError("Cannot use both target and --targets-file.")
+        raise ValueError("不能同时指定单个 target 和 --targets-file。")
     if not target and not targets_file:
-        raise ValueError("Please provide a domain/IP target or use --targets-file.")
+        raise ValueError("请提供目标域名/IP，或使用 --targets-file。")
 
     if targets_file:
         path = Path(targets_file)
         if not path.exists():
-            raise ValueError(f"Target file does not exist: {path}")
+            raise ValueError(f"目标文件不存在: {path}")
         return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     return [str(target).strip()]
@@ -198,19 +198,19 @@ def select_tools(scanner: SubdomainScanner, requested_tools: list[str] | None) -
 
     if requested_tools is None:
         if not available_tools:
-            raise ValueError("No subdomain tools are available. Configure subfinder or oneforall first.")
+            raise ValueError("没有可用的子域名工具，请先配置 subfinder 或 oneforall。")
         return available_tools, tool_status
 
     unknown = [name for name in requested_tools if name not in scanner.AVAILABLE_TOOLS]
     if unknown:
-        raise ValueError(f"Unknown subdomain tools: {', '.join(unknown)}")
+        raise ValueError(f"未知的子域名工具: {', '.join(unknown)}")
 
     unavailable = [name for name in requested_tools if not tool_status.get(name)]
     if unavailable:
         raise ValueError(
-            "The following subdomain tools are unavailable: "
+            "以下子域名工具当前不可用: "
             + ", ".join(unavailable)
-            + ". Please run `python tools/self_check.py` first."
+            + "。请先运行 `python tools/self_check.py` 检查环境。"
         )
 
     return requested_tools, tool_status
@@ -224,9 +224,9 @@ def validate_followup_tools(
     enable_directory_scan: bool,
 ):
     if (enable_port_scan or enable_web_fingerprint) and not NmapSetupManager.is_available():
-        raise ValueError("nmap is unavailable, so port scan and web fingerprint stages cannot run.")
+        raise ValueError("当前 nmap 不可用，无法执行端口扫描或 Web 指纹识别。")
     if enable_directory_scan and not DirsearchTool().check_json_support().get("usable"):
-        console.print("[yellow]dirsearch is unavailable, directory scan will be skipped.[/yellow]")
+        console.print("[yellow]dirsearch 当前不可用，目录扫描阶段会被自动跳过。[/yellow]")
 
 
 def background_status_context(args: argparse.Namespace) -> dict[str, str]:
@@ -407,7 +407,7 @@ def _resolve_ip_only_target_tools(
     if requested_tools:
         unknown = [name for name in requested_tools if name not in scanner.AVAILABLE_TOOLS]
         if unknown:
-            raise ValueError(f"Unknown subdomain tools: {', '.join(unknown)}")
+            raise ValueError(f"未知的子域名工具: {', '.join(unknown)}")
     return [], tool_status
 
 
@@ -433,22 +433,22 @@ def print_plan(
     tool_arg_overrides: dict[str, str] | None = None,
     background: bool = False,
 ):
-    table = Table(title="Execution Plan", show_header=False)
-    table.add_column("Item", style="cyan")
-    table.add_column("Config", overflow="fold")
+    table = Table(title="执行计划", show_header=False)
+    table.add_column("项目", style="cyan")
+    table.add_column("配置", overflow="fold")
 
     if len(targets) == 1:
         target_summary = targets[0]
     else:
         preview = ", ".join(targets[:3])
-        suffix = f" ... total {len(targets)}" if len(targets) > 3 else ""
+        suffix = f" ... 共 {len(targets)} 个" if len(targets) > 3 else ""
         target_summary = preview + suffix
 
-    table.add_row("Targets", target_summary)
-    table.add_row("Preset", preset_name if tools else "N/A for direct IP scan")
+    table.add_row("目标", target_summary)
+    table.add_row("参数档位", preset_name if tools else "IP 直扫无需子域名档位")
     if preset_summary and tools:
-        table.add_row("Preset Summary", preset_summary)
-    table.add_row("Subdomain Tools", ", ".join(tools) if tools else "Direct IP scan")
+        table.add_row("档位摘要", preset_summary)
+    table.add_row("子域名工具", ", ".join(tools) if tools else "IP 直扫")
     if tool_arg_overrides:
         ordered_names = ("subfinder", "oneforall", "nmap", "dirsearch")
         display = " ; ".join(
@@ -456,17 +456,17 @@ def print_plan(
             for name in ordered_names
             if name in tool_arg_overrides
         )
-        table.add_row("Overrides", display)
-    table.add_row("Wildcard Detection", "off" if skip_wildcard else "on")
-    table.add_row("DNS Validation", "off" if skip_validation else "on")
-    table.add_row("Parallel Tools", "on" if tools and parallel else ("off" if tools else "n/a"))
-    table.add_row("Reverse IP", "on" if enable_reverse_ip else "off")
-    table.add_row("Port Scan", "on" if enable_port_scan else "off")
+        table.add_row("临时参数覆盖", display)
+    table.add_row("泛解析检测", "否" if skip_wildcard else "是")
+    table.add_row("DNS 存活验证", "否" if skip_validation else "是")
+    table.add_row("工具并行", "是" if tools and parallel else ("否" if tools else "不适用"))
+    table.add_row("IP 反查", "是" if enable_reverse_ip else "否")
+    table.add_row("端口扫描", "是" if enable_port_scan else "否")
     if enable_port_scan:
-        table.add_row("Port Mode", config.PORT_PRESETS[port_mode]["name"])
-    table.add_row("Web Fingerprint", "on" if enable_web_fingerprint else "off")
-    table.add_row("Directory Scan", "on" if enable_directory_scan else "off")
-    table.add_row("Background", "on" if background else "off")
+        table.add_row("端口预设", config.PORT_PRESETS[port_mode]["name"])
+    table.add_row("Web 指纹", "是" if enable_web_fingerprint else "否")
+    table.add_row("目录扫描", "是" if enable_directory_scan else "否")
+    table.add_row("后台运行", "是" if background else "否")
     console.print()
     console.print(table)
     console.print()
@@ -491,7 +491,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         bool(getattr(args, "directory_scan", False) or ("dirsearch" in cli_tool_arg_overrides)),
     )
     if getattr(args, "skip_validation", False) and enable_directory_scan:
-        raise ValueError("Directory scan requires DNS validation and cannot be used with --skip-validation.")
+        raise ValueError("目录扫描依赖 DNS 存活验证，不能与 --skip-validation 同时使用。")
 
     with config.override_tool_settings(runtime_tool_overrides):
         scanner = SubdomainScanner()
@@ -588,13 +588,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             launched = launch_background_scan(argv)
         except Exception as exc:
-            console.print(f"[red]Failed to start background scan: {exc}[/red]")
+            console.print(f"[red]后台扫描启动失败: {exc}[/red]")
             return 1
 
-        console.print(f"[green]Background job started: {launched['job_id']}[/green]")
+        console.print(f"[green]后台任务已启动: {launched['job_id']}[/green]")
         console.print(f"[green]PID: {launched['pid']}[/green]")
-        console.print(f"[green]Status: {launched['status_path']}[/green]")
-        console.print(f"[green]Log: {launched['log_path']}[/green]")
+        console.print(f"[green]状态文件: {launched['status_path']}[/green]")
+        console.print(f"[green]日志文件: {launched['log_path']}[/green]")
         return 0
 
     if parsed._background_child:
@@ -614,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
             finished_at=datetime.now().isoformat(),
             exit_code=1,
         )
-        console.print("\n[yellow]Scan cancelled.[/yellow]")
+        console.print("\n[yellow]扫描已取消[/yellow]")
         return 1
     except Exception as exc:
         update_background_scan_status(
@@ -624,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
             exit_code=1,
             error=str(exc),
         )
-        console.print(f"[red]Failed to start scan: {exc}[/red]")
+        console.print(f"[red]扫描启动失败: {exc}[/red]")
         return 1
 
     if "saved_path" in result:
@@ -647,13 +647,13 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if "saved_path" in result:
-        console.print(f"[green]Result file: {result['saved_path']}[/green]")
-        console.print(f"[green]Report file: {result['report_path']}[/green]")
+        console.print(f"[green]结果文件: {result['saved_path']}[/green]")
+        console.print(f"[green]摘要文件: {result['report_path']}[/green]")
     else:
         stats = result["batch_summary"]["statistics"]
-        console.print(f"[green]Batch scan finished: {stats['success_count']}/{stats['total_domains']} succeeded[/green]")
-        console.print(f"[green]Summary file: {result['summary_path']}[/green]")
-        console.print(f"[green]Report file: {result['report_path']}[/green]")
+        console.print(f"[green]批量扫描完成: {stats['success_count']}/{stats['total_domains']} 成功[/green]")
+        console.print(f"[green]汇总文件: {result['summary_path']}[/green]")
+        console.print(f"[green]摘要文件: {result['report_path']}[/green]")
     return 0
 
 

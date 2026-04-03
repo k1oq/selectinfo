@@ -1,5 +1,5 @@
 """
-Human-friendly summary reports for scan results.
+面向中文用户的扫描摘要报表。
 """
 
 from __future__ import annotations
@@ -257,7 +257,7 @@ def build_single_scan_report(result: dict[str, Any], source_path: Path | str | N
             add(
                 "IP反查",
                 item.get("domain", "-"),
-                status="match" if item.get("matches_target") else "candidate",
+                status="命中" if item.get("matches_target") else "候选",
                 value=item.get("confidence", "-"),
                 detail_1=", ".join(item.get("sources", [])) or "-",
                 detail_2=", ".join(str(port) for port in item.get("ports", [])) or "-",
@@ -478,11 +478,11 @@ def build_single_scan_workbook(
             (
                 "IP反查",
                 _sheet_rows(
-                    ["Domain", "Match", "Confidence", "Sources", "Ports", "Resolved IPs"],
+                    ["域名", "是否命中目标IP", "置信度", "来源", "端口", "解析IP"],
                     [
                         [
                             item.get("domain", "-"),
-                            "yes" if item.get("matches_target") else "no",
+                            "是" if item.get("matches_target") else "否",
                             item.get("confidence", "-"),
                             ", ".join(item.get("sources", [])) or "-",
                             ", ".join(str(port) for port in item.get("ports", [])) or "-",
