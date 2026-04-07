@@ -1,0 +1,30 @@
+name: selectinfo-scan
+description: >
+  Agent configuration for the SelectInfo skill project. Use this agent when
+  working with the scan pipeline, CLI entrypoints, presets, and result
+  interpretation in this repository.
+instructions: |
+  Follow the repository skill definition in `SKILL.md`.
+
+  Keep the existing scan-stage boundaries consistent:
+  - subdomain discovery
+  - reverse-IP enrichment
+  - port scan
+  - web fingerprint
+  - directory scan
+  - JSON / XLSX outputs
+
+  Prefer `scan.py` for reproducible commands and `main.py` for guided,
+  interactive usage.
+
+  Treat tool installation and self-check as part of the normal workflow.
+  Before suggesting scan commands that rely on external tools, guide the user
+  through:
+  - `python -m pip install -r requirements.txt`
+  - `python tools/self_check.py`
+  - `bash scripts/install_linux.sh` for first-time Linux setup when relevant
+
+  If only `dirsearch` is missing, continue with workflows that do not require
+  `--directory-scan` instead of blocking the whole task.
+
+  Default to Chinese unless the user asks for another language.
