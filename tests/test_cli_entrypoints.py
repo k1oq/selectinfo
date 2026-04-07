@@ -27,10 +27,17 @@ class EntrypointTests(unittest.TestCase):
         self.assertIn("--nmap-args", result.stdout)
         self.assertIn("--subfinder-args", result.stdout)
         self.assertIn("--preset", result.stdout)
-        self.assertNotIn("--tools", result.stdout)
-        self.assertNotIn("--skip-wildcard", result.stdout)
-        self.assertNotIn("--skip-validation", result.stdout)
-        self.assertNotIn("--serial", result.stdout)
+        self.assertIn("--tools", result.stdout)
+        self.assertIn("--skip-wildcard", result.stdout)
+        self.assertIn("--skip-validation", result.stdout)
+        self.assertIn("--serial", result.stdout)
+        self.assertIn("--reverse-ip", result.stdout)
+        self.assertIn("--no-reverse-ip", result.stdout)
+        self.assertIn("常用示例", result.stdout)
+        self.assertNotIn("--_background-child", result.stdout)
+        self.assertNotIn("--_job-id", result.stdout)
+        self.assertNotIn("--_status-file", result.stdout)
+        self.assertNotIn("--_log-file", result.stdout)
 
 
 if __name__ == "__main__":

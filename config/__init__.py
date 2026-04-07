@@ -10,6 +10,7 @@ import os
 import shlex
 import sys
 import threading
+from typing import Any
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -63,6 +64,25 @@ def _require_section(data: dict, key: str) -> dict:
     return value
 
 
+def _normalize_timeout(value: Any, *, numeric_type: type = float) -> int | float | None:
+    """
+    Normalize timeout-like config values.
+
+    `None`, empty strings, and non-positive numbers are treated as "no timeout".
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip().lower()
+        if stripped in {"", "none", "null", "infinite", "infinity", "inf"}:
+            return None
+        value = stripped
+    normalized = numeric_type(value)
+    if normalized <= 0:
+        return None
+    return normalized
+
+
 _SETTINGS = _load_settings_file()
 _DNS = _require_section(_SETTINGS, "dns")
 _REVERSE_IP = _require_section(_SETTINGS, "reverse_ip")
@@ -74,33 +94,34 @@ _SCAN_PRESETS = _require_section(_SETTINGS, "scan_presets")
 _TOOL_DEFAULTS = _require_section(_SETTINGS, "tool_defaults")
 
 
-DNS_TIMEOUT = int(_DNS["timeout"])
+DNS_TIMEOUT = _normalize_timeout(_DNS["timeout"], numeric_type=int)
 DNS_THREADS = int(_DNS["threads"])
 WILDCARD_TEST_COUNT = int(_DNS["wildcard_test_count"])
-REVERSE_IP_TIMEOUT = int(_REVERSE_IP["timeout"])
+REVERSE_IP_TIMEOUT = _normalize_timeout(_REVERSE_IP["timeout"], numeric_type=int)
 REVERSE_IP_TLS_PORTS = [int(item) for item in _REVERSE_IP.get("common_tls_ports", [443, 8443, 9443])]
 
 PORT_SCAN_THREADS = int(_PORT_SCAN["threads"])
 # Total timeout for one nmap subprocess, not a per-port timeout.
-PORT_SCAN_TIMEOUT = float(_PORT_SCAN["timeout"])
+PORT_SCAN_TIMEOUT = _normalize_timeout(_PORT_SCAN["timeout"], numeric_type=float)
 NMAP_PATH = str(_PORT_SCAN["nmap_path"])
 
-WEB_FINGERPRINT_TIMEOUT = int(_WEB_FINGERPRINT["timeout"])
-WEB_FINGERPRINT_HOST_TIMEOUT = str(_WEB_FINGERPRINT["host_timeout"])
-WEB_FINGERPRINT_SCRIPT_TIMEOUT = str(_WEB_FINGERPRINT["script_timeout"])
+WEB_FINGERPRINT_TIMEOUT = _normalize_timeout(_WEB_FINGERPRINT["timeout"], numeric_type=int)
+WEB_FINGERPRINT_HOST_TIMEOUT = None
+if _WEB_FINGERPRINT.get("host_timeout") not in (None, ""):
+    WEB_FINGERPRINT_HOST_TIMEOUT = str(_WEB_FINGERPRINT["host_timeout"]).strip() or None
+WEB_FINGERPRINT_SCRIPT_TIMEOUT = None
+if _WEB_FINGERPRINT.get("script_timeout") not in (None, ""):
+    WEB_FINGERPRINT_SCRIPT_TIMEOUT = str(_WEB_FINGERPRINT["script_timeout"]).strip() or None
 WEB_FINGERPRINT_BASE_ARGS = [str(item) for item in _WEB_FINGERPRINT["base_args"]]
 WEB_FINGERPRINT_SCRIPTS = [str(item) for item in _WEB_FINGERPRINT["scripts"]]
-WEB_FINGERPRINT_NMAP_ARGS = [
-    *WEB_FINGERPRINT_BASE_ARGS,
-    "--host-timeout",
-    WEB_FINGERPRINT_HOST_TIMEOUT,
-    "--script-timeout",
-    WEB_FINGERPRINT_SCRIPT_TIMEOUT,
-    "--script",
-    ",".join(WEB_FINGERPRINT_SCRIPTS),
-]
+WEB_FINGERPRINT_NMAP_ARGS = [*WEB_FINGERPRINT_BASE_ARGS]
+if WEB_FINGERPRINT_HOST_TIMEOUT:
+    WEB_FINGERPRINT_NMAP_ARGS.extend(["--host-timeout", WEB_FINGERPRINT_HOST_TIMEOUT])
+if WEB_FINGERPRINT_SCRIPT_TIMEOUT:
+    WEB_FINGERPRINT_NMAP_ARGS.extend(["--script-timeout", WEB_FINGERPRINT_SCRIPT_TIMEOUT])
+WEB_FINGERPRINT_NMAP_ARGS.extend(["--script", ",".join(WEB_FINGERPRINT_SCRIPTS)])
 
-DIRSEARCH_TIMEOUT = int(_DIRSEARCH["timeout"])
+DIRSEARCH_TIMEOUT = _normalize_timeout(_DIRSEARCH["timeout"], numeric_type=int)
 DIRSEARCH_THREADS = int(_DIRSEARCH["threads"])
 DIRSEARCH_MAX_WORKERS = int(_DIRSEARCH["max_workers"])
 DIRSEARCH_DEFAULT_EXTRA_ARGS = [str(item) for item in _DIRSEARCH["default_extra_args"]]
@@ -329,6 +350,11 @@ def get_all_tool_settings() -> dict:
     return {name: get_tool_settings(name) for name in DEFAULT_TOOL_SETTINGS}
 
 
+def normalize_runtime_timeout(value: Any, *, numeric_type: type = float) -> int | float | None:
+    """Normalize runtime timeout values from config, JSON, and CLI-driven updates."""
+    return _normalize_timeout(value, numeric_type=numeric_type)
+
+
 def normalize_scan_preset_name(preset_name: str | None) -> str:
     """Normalize and validate a scan preset name."""
     candidate = str(preset_name or SCAN_PRESET_DEFAULT).strip().lower()
@@ -412,9 +438,9 @@ def summarize_scan_preset(preset_name: str | None = None) -> str:
             dirsearch_rate = str(dirsearch_args[index + 1])
     return (
         f"tools={','.join(preset['subdomain_tools'])} ; "
-        f"subfinder timeout={subfinder.get('timeout')}s use_all={subfinder.get('use_all')} ; "
-        f"oneforall timeout={oneforall.get('timeout')}s brute={oneforall.get('brute')} ; "
-        f"nmap timeout={nmap.get('timeout')}s retries={nmap_retries} ; "
+        f"subfinder timeout={subfinder.get('timeout') or 'unlimited'} use_all={subfinder.get('use_all')} ; "
+        f"oneforall timeout={oneforall.get('timeout') or 'unlimited'} brute={oneforall.get('brute')} ; "
+        f"nmap timeout={nmap.get('timeout') or 'unlimited'} retries={nmap_retries} ; "
         f"dirsearch threads={dirsearch.get('threads')} rate={dirsearch_rate}"
     )
 

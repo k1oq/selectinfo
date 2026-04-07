@@ -93,7 +93,7 @@ class DirsearchTool:
             return [sys.executable, str(self.executable)], str(self.executable.parent)
         return [str(self.executable)], str(self.executable.parent)
 
-    def run_help(self, timeout: int = 20) -> dict[str, Any]:
+    def run_help(self, timeout: int | None = 20) -> dict[str, Any]:
         if not self.is_installed():
             return {"ok": False, "stdout": "", "stderr": "", "message": "dirsearch 未安装"}
 
@@ -173,7 +173,10 @@ class DirsearchTool:
         command, cwd = self.build_scan_command(url, output_path)
         completed = self._run_command(
             command,
-            timeout=int(settings.get("timeout", config.DIRSEARCH_TIMEOUT)),
+            timeout=config.normalize_runtime_timeout(
+                settings.get("timeout", config.DIRSEARCH_TIMEOUT),
+                numeric_type=int,
+            ),
             cwd=cwd,
         )
 
@@ -311,7 +314,7 @@ class DirsearchTool:
             return None
 
     @staticmethod
-    def _run_command(command: list[str], timeout: int, cwd: str | None = None) -> dict[str, Any]:
+    def _run_command(command: list[str], timeout: int | None, cwd: str | None = None) -> dict[str, Any]:
         try:
             result = subprocess.run(
                 command,

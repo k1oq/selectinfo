@@ -124,12 +124,13 @@ class OneForAllTool(BaseTool):
         ]
 
         try:
+            timeout = config.normalize_runtime_timeout(settings.get("timeout", 1800), numeric_type=int)
             result = subprocess.run(
                 cmd,
                 cwd=str(self.tool_dir),
                 capture_output=True,
                 text=True,
-                timeout=int(settings.get("timeout", 1800)),
+                timeout=timeout,
             )
         except subprocess.TimeoutExpired:
             message = "OneForAll 扫描超时"

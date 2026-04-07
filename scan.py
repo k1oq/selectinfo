@@ -45,10 +45,18 @@ from utils.logger import console
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="SelectInfo 非交互扫描入口，适合直接运行单目标或批量任务。",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=(
+            "常用示例:\n"
+            "  python scan.py example.com --preset deep --port-scan --web-fingerprint\n"
+            "  python scan.py 1.1.1.1 --port-scan --reverse-ip\n"
+            "  python scan.py 1.1.1.1 --port-scan --no-reverse-ip\n"
+            "  python scan.py --targets-file targets.txt --preset quick --background"
+        ),
     )
     parser.add_argument("target", nargs="?", help="单个目标域名或 IP")
     parser.add_argument("--targets-file", help="批量目标文件，每行一个域名或 IP")
-    parser.add_argument("--tools", help=argparse.SUPPRESS)
+    parser.add_argument("--tools", help="指定子域名工具，多个用逗号分隔，例如 subfinder,oneforall")
     parser.add_argument(
         "--preset",
         choices=config.list_scan_presets(),
@@ -57,9 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--subfinder-args", help="本次运行临时覆盖 Subfinder 参数字符串")
     parser.add_argument("--oneforall-args", help="本次运行临时覆盖 OneForAll 参数字符串")
-    parser.add_argument("--skip-wildcard", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--skip-validation", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--serial", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--skip-wildcard", action="store_true", help="跳过泛解析检测")
+    parser.add_argument("--skip-validation", action="store_true", help="跳过 DNS 存活验证")
+    parser.add_argument("--serial", action="store_true", help="子域名工具改为串行执行，不并行")
     parser.add_argument("--port-scan", action="store_true", help="启用端口扫描")
     parser.add_argument("--nmap-args", help="本次运行临时覆盖 nmap 参数字符串")
     parser.add_argument(
@@ -79,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dirsearch-args", help="本次运行临时覆盖 dirsearch 参数字符串")
     parser.add_argument("--results-dir", help="覆盖默认 results 目录")
     parser.add_argument("--output", help="单目标模式下显式指定 JSON 结果路径")
-    parser.add_argument("--summary-output", help="显式指定摘要报告路径")
+    parser.add_argument("--summary-output", help="显式指定摘要报告路径（输出为 .xlsx）")
     parser.add_argument("--background", action="store_true", help="后台运行，并将日志写入 runtime/jobs")
     parser.add_argument("--_background-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--_job-id", help=argparse.SUPPRESS)

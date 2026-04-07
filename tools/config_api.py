@@ -185,12 +185,20 @@ class ToolConfigAPI:
                 raise ValueError(f"{tool_name} 不支持参数: {key}")
 
             default_value = defaults[key]
-            if isinstance(default_value, bool):
+            if "timeout" in key and value is None:
+                sanitized[key] = None
+            elif isinstance(default_value, bool):
                 sanitized[key] = bool(value)
             elif isinstance(default_value, int) and not isinstance(default_value, bool):
-                sanitized[key] = int(value)
+                if "timeout" in key:
+                    sanitized[key] = config.normalize_runtime_timeout(value, numeric_type=int)
+                else:
+                    sanitized[key] = int(value)
             elif isinstance(default_value, float):
-                sanitized[key] = float(value)
+                if "timeout" in key:
+                    sanitized[key] = config.normalize_runtime_timeout(value, numeric_type=float)
+                else:
+                    sanitized[key] = float(value)
             elif isinstance(default_value, list):
                 if not isinstance(value, list):
                     raise ValueError(f"{tool_name}.{key} 需要 list")

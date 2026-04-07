@@ -98,11 +98,12 @@ class SubfinderTool(BaseTool):
         cmd.extend(settings.get("extra_args", []))
 
         try:
+            timeout = config.normalize_runtime_timeout(settings.get("timeout", 600), numeric_type=int)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=int(settings.get("timeout", 600)),
+                timeout=timeout,
                 env=config.get_subfinder_runtime_env(),
             )
         except subprocess.TimeoutExpired:
